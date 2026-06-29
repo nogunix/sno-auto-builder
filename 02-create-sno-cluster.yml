@@ -72,3 +72,35 @@
       async: 7200
       poll: 30
       changed_when: true
+
+    - name: Get bastion IP from libvirt
+      ansible.builtin.command:
+        cmd: virsh -c qemu:///system domifaddr {{ sno_prefix }}_bastion0
+      register: domifaddr_out
+      changed_when: false
+
+    - name: Set bastion IP fact
+      ansible.builtin.set_fact:
+        sno_bastion_ip: "{{ domifaddr_out.stdout | regex_search('ipv4\\s+(\\S+)', '\\1') | first | split('/') | first }}"
+
+    - name: Add bastion to inventory for kubeconfig copy
+      ansible.builtin.add_host:
+        name: bastion_server
+        ansible_host: "{{ sno_bastion_ip }}"
+        ansible_user: "{{ sno_bastion_user }}"
+        ansible_password: "{{ sno_bastion_password }}"
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+
+- name: SNO - copy kubeconfig to bastion
+  hosts: bastion_server
+  gather_facts: false
+  vars_files:
+    - vars.yml
+
+  tasks:
+    - name: Copy kubeconfig to bastion
+      ansible.builtin.copy:
+        src: "{{ sno_manifests_dir }}/auth/kubeconfig"
+        dest: /root/kubeconfig
+        mode: '0600'
+      become: true
