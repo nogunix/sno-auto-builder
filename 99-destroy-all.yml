@@ -1,0 +1,116 @@
+---
+- name: SNO - destroy all
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - vars.yml
+
+  tasks:
+    - name: Check if work directory exists
+      ansible.builtin.stat:
+        path: "{{ sno_tf_dir }}"
+      register: tf_dir_stat
+
+    - name: OpenTofu destroy (remove all VMs, networks, pool)
+      ansible.builtin.command:
+        cmd: tofu destroy -auto-approve
+        chdir: "{{ sno_tf_dir }}"
+      when: tf_dir_stat.stat.exists
+      register: tf_destroy
+      failed_when: false
+      changed_when: tf_destroy.rc == 0 and 'Destroy complete!' in tf_destroy.stdout
+
+    - name: Undefine SNO master domain from libvirt if not tracked by tofu
+      ansible.builtin.command:
+        cmd: virsh -c qemu:///system undefine --nvram {{ sno_prefix }}_master0
+      failed_when: false
+      changed_when: false
+
+    - name: Stop SNO bastion domain from libvirt if running
+      ansible.builtin.command:
+        cmd: virsh -c qemu:///system destroy {{ sno_prefix }}_bastion0
+      failed_when: false
+      changed_when: false
+
+    - name: Undefine SNO bastion domain from libvirt if not tracked by tofu
+      ansible.builtin.command:
+        cmd: virsh -c qemu:///system undefine --nvram {{ sno_prefix }}_bastion0
+      failed_when: false
+      changed_when: false
+
+    - name: Destroy SNO network from libvirt if not tracked by tofu
+      ansible.builtin.command:
+        cmd: virsh -c qemu:///system net-destroy {{ sno_prefix }}_network
+      failed_when: false
+      changed_when: false
+
+    - name: Undefine SNO network from libvirt if not tracked by tofu
+      ansible.builtin.command:
+        cmd: virsh -c qemu:///system net-undefine {{ sno_prefix }}_network
+      failed_when: false
+      changed_when: false
+
+    - name: Destroy default_network from libvirt if not tracked by tofu
+      ansible.builtin.command:
+        cmd: virsh -c qemu:///system net-destroy default_network
+      failed_when: false
+      changed_when: false
+
+    - name: Undefine default_network from libvirt if not tracked by tofu
+      ansible.builtin.command:
+        cmd: virsh -c qemu:///system net-undefine default_network
+      failed_when: false
+      changed_when: false
+
+    - name: Destroy default storage pool from libvirt if not tracked by tofu
+      ansible.builtin.command:
+        cmd: virsh -c qemu:///system pool-destroy default
+      failed_when: false
+      changed_when: false
+
+    - name: Undefine default storage pool from libvirt if not tracked by tofu
+      ansible.builtin.command:
+        cmd: virsh -c qemu:///system pool-undefine default
+      failed_when: false
+      changed_when: false
+
+    - name: Remove base directory (pool, work, ISO, scripts)
+      ansible.builtin.file:
+        path: "{{ sno_base_dir }}"
+        state: absent
+      become: true
+
+    - name: Remove nginx SNO stream config
+      ansible.builtin.file:
+        path: /etc/nginx/stream.d/sno.conf
+        state: absent
+      become: true
+
+    - name: Remove SNO stream block from nginx.conf
+      ansible.builtin.blockinfile:
+        path: /etc/nginx/nginx.conf
+        marker: "# {mark} SNO stream proxy"
+        block: ""
+      become: true
+      failed_when: false
+
+    - name: Stop and disable nginx
+      ansible.builtin.systemd:
+        name: nginx
+        enabled: false
+        state: stopped
+      become: true
+      failed_when: false
+
+    - name: Close firewalld ports (80, 443, 6443)
+      ansible.posix.firewalld:
+        port: "{{ item }}/tcp"
+        permanent: true
+        state: disabled
+        immediate: true
+      become: true
+      failed_when: false
+      loop:
+        - "80"
+        - "443"
+        - "6443"

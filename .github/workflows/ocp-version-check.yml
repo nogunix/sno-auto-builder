@@ -1,0 +1,152 @@
+name: OCP Version Check
+
+on:
+  schedule:
+    - cron: '0 0 * * 1'  # every Monday at 00:00 UTC
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch latest stable OCP version
+        id: version
+        run: |
+          VERSION=$(curl -sSf \
+            "https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/release.txt" \
+            | grep -oP 'Version:\s*\K[\d.]+')
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Detected stable OCP version: ${VERSION}"
+
+      - name: Fetch latest stable-4.20 OCP version
+        id: version_420
+        run: |
+          VERSION=$(curl -sSf \
+            "https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable-4.20/release.txt" \
+            | grep -oP 'Version:\s*\K[\d.]+')
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Detected stable-4.20 OCP version: ${VERSION}"
+
+      - name: Check download URLs (stable)
+        id: urls
+        run: |
+          BASE="https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable"
+          FAILED=()
+          for FILE in \
+            openshift-client-linux.tar.gz \
+            openshift-install-linux.tar.gz; do
+            URL="${BASE}/${FILE}"
+            STATUS=$(curl -sSo /dev/null -w "%{http_code}" --head "${URL}")
+            echo "${STATUS} ${URL}"
+            if [[ "${STATUS}" != "200" ]]; then
+              FAILED+=("${URL} (HTTP ${STATUS})")
+            fi
+          done
+          if [[ ${#FAILED[@]} -gt 0 ]]; then
+            printf '%s\n' "${FAILED[@]}" > /tmp/failed_urls.txt
+            echo "failed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "failed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check download URLs (stable-4.20)
+        id: urls_420
+        run: |
+          BASE="https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable-4.20"
+          FAILED=()
+          for FILE in \
+            openshift-client-linux.tar.gz \
+            openshift-install-linux.tar.gz; do
+            URL="${BASE}/${FILE}"
+            STATUS=$(curl -sSo /dev/null -w "%{http_code}" --head "${URL}")
+            echo "${STATUS} ${URL}"
+            if [[ "${STATUS}" != "200" ]]; then
+              FAILED+=("${URL} (HTTP ${STATUS})")
+            fi
+          done
+          if [[ ${#FAILED[@]} -gt 0 ]]; then
+            printf '%s\n' "${FAILED[@]}" > /tmp/failed_urls_420.txt
+            echo "failed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "failed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run ansible-lint
+        id: lint
+        uses: ansible/ansible-lint@v25
+        continue-on-error: true
+
+      - name: Open issue on failure
+        if: steps.urls.outputs.failed == 'true' || steps.urls_420.outputs.failed == 'true' || steps.lint.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const version = '${{ steps.version.outputs.version }}';
+            const version420 = '${{ steps.version_420.outputs.version }}';
+            const urlFailed = '${{ steps.urls.outputs.failed }}' === 'true';
+            const url420Failed = '${{ steps.urls_420.outputs.failed }}' === 'true';
+            const lintFailed = '${{ steps.lint.outcome }}' === 'failure';
+
+            const lines = [
+              `## OCP Version Check Failed`,
+              ``,
+              `**Detected stable version:** \`${version}\``,
+              `**Detected stable-4.20 version:** \`${version420}\``,
+              `**Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`,
+              ``,
+            ];
+
+            if (urlFailed) {
+              const fs = require('fs');
+              const urls = fs.readFileSync('/tmp/failed_urls.txt', 'utf8').trim();
+              lines.push(`### Download URLs unreachable (stable)`);
+              lines.push('```');
+              lines.push(urls);
+              lines.push('```');
+              lines.push('');
+            }
+
+            if (url420Failed) {
+              const fs = require('fs');
+              const urls = fs.readFileSync('/tmp/failed_urls_420.txt', 'utf8').trim();
+              lines.push(`### Download URLs unreachable (stable-4.20)`);
+              lines.push('```');
+              lines.push(urls);
+              lines.push('```');
+              lines.push('');
+            }
+
+            if (lintFailed) {
+              lines.push(`### ansible-lint failed`);
+              lines.push(`Check the workflow run for details.`);
+            }
+
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: ['ocp-version-check'],
+              state: 'open',
+            });
+
+            if (issues.length > 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issues[0].number,
+                body: lines.join('\n'),
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `OCP version check failed (stable: ${version}, stable-4.20: ${version420})`,
+                body: lines.join('\n'),
+                labels: ['ocp-version-check'],
+              });
+            }

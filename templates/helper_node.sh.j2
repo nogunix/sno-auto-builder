@@ -1,0 +1,217 @@
+#!/bin/bash
+
+# Bastion helper services setup for SNO (Single Node OpenShift)
+# Cluster: {{ sno_cluster_name }}.{{ sno_base_domain }}
+
+PLATFORM=${PLATFORM:-none}
+CLUSTER_VERSION=${CLUSTER_VERSION:-stable}
+
+set -eux
+
+if [[ $(whoami) != "root" ]]; then
+    echo "Please run as root user."
+    exit 1
+fi
+
+grep -qE "Red Hat Enterprise Linux release|CentOS Stream release" /etc/redhat-release || {
+    echo "Unsupported OS (requires RHEL or CentOS Stream)."
+    exit 1
+}
+
+if [ -f /etc/helper_node_setup_info ]; then
+    echo "Already setup. Check /etc/helper_node_setup_info"
+    exit 0
+fi
+
+cd $HOME
+
+echo "=== Setup Bastion Server ==="
+dnf install -y policycoreutils-python-utils firewalld python3-firewall git sshpass rsync
+systemctl enable --now firewalld
+
+echo "=== Setup DNS Server ==="
+dnf install -y dnsmasq bind-utils
+
+cp /etc/dnsmasq.conf /etc/dnsmasq.conf.org
+sed -i -e 's|#resolv-file=|resolv-file=/etc/resolv.conf.upstream|' /etc/dnsmasq.conf
+sed -i -e 's|^bind-interfaces|#bind-interfaces|'                    /etc/dnsmasq.conf
+sed -i -e 's|^interface=lo|#interface=lo|'                          /etc/dnsmasq.conf
+sed -i -e 's|#bogus-priv|bogus-priv|'                               /etc/dnsmasq.conf
+
+cat <<EOF > /etc/dnsmasq.d/{{ sno_cluster_name }}.{{ sno_base_domain }}
+address=/.apps.{{ sno_cluster_name }}.{{ sno_base_domain }}/{{ sno_ingress_vip }}
+EOF
+
+cp /etc/hosts /etc/hosts.org
+cat <<EOF >> /etc/hosts
+{{ sno_proxy_ip }} bastion0.{{ sno_cluster_name }}.{{ sno_base_domain }}
+
+{{ sno_api_vip }} api.{{ sno_cluster_name }}.{{ sno_base_domain }}
+{{ sno_api_vip }} api-int.{{ sno_cluster_name }}.{{ sno_base_domain }}
+
+{{ sno_master_ip }} master0.{{ sno_cluster_name }}.{{ sno_base_domain }} master0
+EOF
+
+cat <<EOF > /etc/NetworkManager/conf.d/90-dns-none.conf
+[main]
+dns=none
+EOF
+systemctl reload NetworkManager
+
+# Save original upstream DNS only once (guard against re-run loop)
+if ! grep -qv '^nameserver 127.0.0.1$' /etc/resolv.conf.upstream 2>/dev/null; then
+    cp /etc/resolv.conf /etc/resolv.conf.upstream
+    cp /etc/resolv.conf /etc/resolv.conf.org
+fi
+cat <<EOF > /etc/resolv.conf
+nameserver 127.0.0.1
+EOF
+
+systemctl enable --now dnsmasq
+firewall-cmd --zone=public --add-service=dns --permanent
+firewall-cmd --reload
+
+echo "=== Setup NTP Server ==="
+dnf install -y chrony
+
+cp /etc/chrony.conf /etc/chrony.conf.org
+sed -i -e "s|#allow 192.168.0.0/16|allow 192.168.0.0/16|" /etc/chrony.conf
+
+systemctl enable --now chronyd
+firewall-cmd --zone=public --add-service=ntp --permanent
+firewall-cmd --reload
+
+echo "=== Setup Proxy Server ==="
+dnf install -y squid
+
+cp /etc/squid/squid.conf /etc/squid/squid.conf.org
+cat <<EOF >> /etc/squid/squid.conf
+cache deny all
+EOF
+
+systemctl enable --now squid
+firewall-cmd --zone=public --add-service=squid --permanent
+firewall-cmd --reload
+
+echo "=== Setup NFS Server ==="
+dnf install -y nfs-utils
+
+cp /etc/exports /etc/exports.org
+cat <<EOF > /etc/exports
+/export	*(rw,async,no_subtree_check,no_root_squash)
+EOF
+
+mkdir -p /export
+chmod 0777 /export
+
+systemctl enable --now rpcbind
+systemctl enable --now nfs-server
+firewall-cmd --zone=public --permanent --add-service mountd
+firewall-cmd --zone=public --permanent --add-service rpc-bind
+firewall-cmd --zone=public --permanent --add-service nfs
+firewall-cmd --reload
+
+if [ "$PLATFORM" = "none" ]; then
+echo "=== Setup Load Balancer Server ==="
+dnf install -y haproxy
+
+cp /etc/haproxy/haproxy.cfg /etc/haproxy/haproxy.cfg.org
+cat <<EOF > /etc/haproxy/haproxy.cfg
+global
+  log         127.0.0.1 local2
+  chroot      /var/lib/haproxy
+  pidfile     /var/run/haproxy.pid
+  maxconn     4000
+  daemon
+
+defaults
+  mode                    http
+  log                     global
+  option                  dontlognull
+  option                  http-server-close
+  option                  redispatch
+  retries                 3
+  timeout http-request    10s
+  timeout queue           1m
+  timeout connect         10s
+  timeout client          1m
+  timeout server          1m
+  timeout http-keep-alive 10s
+  timeout check           10s
+  maxconn                 3000
+
+listen api-server-6443
+  bind *:6443
+  mode tcp
+  option  httpchk GET /readyz HTTP/1.0
+  option  log-health-checks
+  balance roundrobin
+  server master0 master0.{{ sno_cluster_name }}.{{ sno_base_domain }}:6443 weight 1 verify none check check-ssl inter 10s fall 2 rise 3
+
+listen machine-config-server-22623
+  bind *:22623
+  mode tcp
+  server master0 master0.{{ sno_cluster_name }}.{{ sno_base_domain }}:22623 check inter 1s
+
+listen ingress-router-443
+  bind *:443
+  mode tcp
+  balance source
+  server master0 master0.{{ sno_cluster_name }}.{{ sno_base_domain }}:443 check inter 1s
+
+listen ingress-router-80
+  bind *:80
+  mode tcp
+  balance source
+  server master0 master0.{{ sno_cluster_name }}.{{ sno_base_domain }}:80 check inter 1s
+EOF
+
+semanage port -a -t http_port_t -p tcp 6443
+semanage port -a -t http_port_t -p tcp 22623
+
+systemctl enable --now haproxy
+firewall-cmd --permanent --add-port=80/tcp
+firewall-cmd --permanent --add-port=443/tcp
+firewall-cmd --permanent --add-port=6443/tcp
+firewall-cmd --permanent --add-port=22623/tcp
+firewall-cmd --reload
+
+# Add API/ingress VIPs to the cluster-facing NIC (matched by MAC address)
+NIC=$(ip -o link | awk '/{{ sno_bastion_mac_sno }}/{print $2}' | tr -d ':')
+CON=$(nmcli -t -f NAME,DEVICE connection show | awk -F: -v dev="$NIC" '$2==dev{print $1}' | head -1)
+if [[ -z "$CON" ]]; then
+  CON="sno-cluster-nic"
+  nmcli connection add type ethernet ifname "$NIC" con-name "$CON"
+fi
+nmcli connection modify "$CON" \
+  ipv4.method manual \
+  ipv4.addresses {{ sno_proxy_ip }}/24 \
+  ipv4.gateway {{ sno_gateway }} \
+  +ipv4.addresses {{ sno_api_vip }}/24 \
+  +ipv4.addresses {{ sno_ingress_vip }}/24
+nmcli connection up "$CON"
+systemctl restart NetworkManager
+fi
+
+echo "=== Setup OCP Client ==="
+dnf install -y tree tar curl bash-completion httpd-tools
+curl -OL https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/$CLUSTER_VERSION/openshift-client-linux.tar.gz
+tar xzvf openshift-client-linux.tar.gz -C /usr/local/bin/
+rm -f /usr/local/bin/README.md
+
+# Ensure /usr/local/bin is on sudo's secure_path so `sudo oc` works
+echo 'Defaults secure_path = /sbin:/bin:/usr/sbin:/usr/bin:/usr/local/bin' > /etc/sudoers.d/local_path
+chmod 440 /etc/sudoers.d/local_path
+
+export PATH=$PATH:/usr/local/bin
+oc completion bash > /etc/bash_completion.d/oc_bash_completion
+
+oc version
+
+cat <<EOF > /etc/helper_node_setup_info
+[Setup Information]
+Source: https://github.com/nogunix/sno-auto-builder
+Date:   $(date '+%Y-%m-%d %H:%M:%S')
+EOF
+
+echo "All done!"

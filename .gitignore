@@ -1,0 +1,22 @@
+# Terraform state / plans (generated under /terraform on the host)
+*.tfstate
+*.tfstate.*
+.terraform/
+*.tfplan
+
+# Generated artifacts
+*.iso
+agent.x86_64.iso
+
+# Secrets — never commit
+openshift-pull-secret*
+*_rsa
+*_rsa.pub
+*.key
+auth/
+kubeconfig
+*kubeconfig*
+
+# Editor / OS
+*.swp
+.DS_Store

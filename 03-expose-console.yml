@@ -1,0 +1,90 @@
+---
+- name: SNO - Expose console to home network via nginx stream proxy
+  hosts: localhost
+  gather_facts: true
+  vars_files:
+    - vars.yml
+
+  tasks:
+    - name: Install nginx and stream module
+      ansible.builtin.dnf:
+        name:
+          - nginx
+          - nginx-mod-stream
+        state: present
+      become: true
+
+    - name: Deploy nginx.conf (stream-only, no conflicting http server)
+      ansible.builtin.template:
+        src: templates/nginx.conf.j2
+        dest: /etc/nginx/nginx.conf
+        mode: '0644'
+        backup: true
+      become: true
+      notify: Reload nginx
+
+    - name: Allow nginx to connect to upstream (SELinux)
+      ansible.posix.seboolean:
+        name: httpd_can_network_connect
+        state: true
+        persistent: true
+      become: true
+      when: ansible_facts['selinux'].status == 'enabled'
+
+    - name: Allow port 6443 for SELinux (nginx stream)
+      ansible.builtin.command:
+        cmd: semanage port -a -t http_port_t -p tcp 6443
+      become: true
+      register: semanage_result
+      changed_when: semanage_result.rc == 0
+      failed_when: semanage_result.rc != 0 and 'already defined' not in semanage_result.stderr
+      when: ansible_facts['selinux'].status == 'enabled'
+
+    - name: Create nginx stream.d directory
+      ansible.builtin.file:
+        path: /etc/nginx/stream.d
+        state: directory
+        mode: '0755'
+      become: true
+
+    - name: Deploy SNO stream proxy config
+      ansible.builtin.template:
+        src: templates/nginx-sno-stream.conf.j2
+        dest: /etc/nginx/stream.d/sno.conf
+        mode: '0644'
+      become: true
+      notify: Reload nginx
+
+    - name: Open ports in firewalld (80, 443, 6443)
+      ansible.posix.firewalld:
+        port: "{{ item }}/tcp"
+        permanent: true
+        state: enabled
+        immediate: true
+      become: true
+      loop:
+        - "80"
+        - "443"
+        - "6443"
+
+    - name: Enable and start nginx
+      ansible.builtin.systemd:
+        name: nginx
+        enabled: true
+        state: started
+      become: true
+
+    - name: Show /etc/hosts entries for home devices
+      ansible.builtin.debug:
+        msg: |
+          Add these entries to /etc/hosts on each home device:
+          {{ ansible_facts['default_ipv4']['address'] }}  console-openshift-console.apps.{{ sno_cluster_name }}.{{ sno_base_domain }}
+          {{ ansible_facts['default_ipv4']['address'] }}  oauth-openshift.apps.{{ sno_cluster_name }}.{{ sno_base_domain }}
+          {{ ansible_facts['default_ipv4']['address'] }}  api.{{ sno_cluster_name }}.{{ sno_base_domain }}
+
+  handlers:
+    - name: Reload nginx
+      ansible.builtin.systemd:
+        name: nginx
+        state: reloaded
+      become: true

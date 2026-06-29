@@ -1,0 +1,41 @@
+terraform {
+  required_providers {
+    libvirt = {
+      source  = "dmacvicar/libvirt"
+      version = "0.8.3"
+    }
+  }
+}
+
+provider "libvirt" {
+  uri = "qemu:///system"
+}
+
+resource "libvirt_pool" "default" {
+  name = "default"
+  type = "dir"
+  target {
+    path = "{{ sno_pool_dir }}"
+  }
+}
+
+resource "libvirt_network" "default_network" {
+  name      = "default_network"
+  autostart = true
+  mode      = "nat"
+  addresses = ["192.168.222.0/24"]
+  bridge    = "defbr0"
+  dhcp {
+    enabled = true
+  }
+}
+
+resource "libvirt_network" "{{ sno_prefix }}_network" {
+  name      = "{{ sno_prefix }}_network"
+  autostart = true
+  mode      = "nat"
+  addresses = ["{{ sno_machine_network }}"]
+  dhcp {
+    enabled = false
+  }
+}

@@ -1,0 +1,74 @@
+---
+- name: SNO - cluster VM (1 master)
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - vars.yml
+
+  tasks:
+    - name: Verify agent ISO exists
+      ansible.builtin.stat:
+        path: "{{ sno_tf_dir }}/{{ sno_cluster_os_image_name }}"
+      register: iso_stat
+
+    - name: Fail if agent ISO is missing
+      ansible.builtin.fail:
+        msg: "Agent ISO not found: {{ sno_tf_dir }}/{{ sno_cluster_os_image_name }} — run 01-infra-bastion.yml first"
+      when: not iso_stat.stat.exists
+
+    - name: Verify openshift-install binary exists
+      ansible.builtin.stat:
+        path: "{{ sno_installer_path }}"
+      register: installer_stat
+
+    - name: Fail if openshift-install is missing
+      ansible.builtin.fail:
+        msg: "openshift-install not found: {{ sno_installer_path }} — run 01-infra-bastion.yml first"
+      when: not installer_stat.stat.exists
+
+    - name: Generate master OpenTofu manifest
+      ansible.builtin.template:
+        src: templates/master.tf.j2
+        dest: "{{ sno_tf_dir }}/{{ sno_prefix }}_cluster_master0.tf"
+        mode: '0644'
+
+    - name: Remove SNO master domain from tofu state if present (stale from prior run)
+      ansible.builtin.command:
+        cmd: tofu state rm libvirt_domain.{{ sno_prefix }}_master0
+        chdir: "{{ sno_tf_dir }}"
+      failed_when: false
+      changed_when: false
+
+    - name: Undefine SNO master domain from libvirt if it already exists
+      ansible.builtin.command:
+        cmd: virsh -c qemu:///system undefine --nvram {{ sno_prefix }}_master0
+      failed_when: false
+      changed_when: false
+
+    - name: OpenTofu apply (create SNO master VM)
+      ansible.builtin.command:
+        cmd: tofu apply -auto-approve
+        chdir: "{{ sno_tf_dir }}"
+      register: tf_apply
+      changed_when: "'Apply complete!' in tf_apply.stdout"
+
+    - name: Add SNO API endpoint to /etc/hosts for monitoring
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        line: "{{ sno_api_vip }} api.{{ sno_cluster_name }}.{{ sno_base_domain }} api-int.{{ sno_cluster_name }}.{{ sno_base_domain }}"
+        state: present
+      become: true
+
+    - name: Wait for bootstrap complete
+      ansible.builtin.command:
+        cmd: "{{ sno_installer_path }} agent wait-for bootstrap-complete --dir {{ sno_manifests_dir }} --log-level info"
+      async: 3600
+      poll: 30
+      changed_when: true
+
+    - name: Wait for install complete
+      ansible.builtin.command:
+        cmd: "{{ sno_installer_path }} agent wait-for install-complete --dir {{ sno_manifests_dir }} --log-level info"
+      async: 7200
+      poll: 30
+      changed_when: true

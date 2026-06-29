@@ -1,0 +1,35 @@
+apiVersion: v1beta1
+kind: AgentConfig
+metadata:
+  name: {{ sno_cluster_name }}
+rendezvousIP: {{ sno_master_ip }}
+hosts:
+  - hostname: master0.{{ sno_cluster_name }}.{{ sno_base_domain }}
+    role: master
+    rootDeviceHints:
+      deviceName: /dev/sda
+    interfaces:
+      - name: {{ sno_interface }}
+        macAddress: {{ sno_master_mac }}
+    networkConfig:
+      interfaces:
+        - name: {{ sno_interface }}
+          type: ethernet
+          state: up
+          mac-address: {{ sno_master_mac }}
+          ipv4:
+            enabled: true
+            address:
+              - ip: {{ sno_master_ip }}
+                prefix-length: 24
+            dhcp: false
+      dns-resolver:
+        config:
+          server:
+            - {{ sno_proxy_ip }}
+      routes:
+        config:
+          - destination: 0.0.0.0/0
+            next-hop-address: {{ sno_gateway }}
+            next-hop-interface: {{ sno_interface }}
+            table-id: 254
