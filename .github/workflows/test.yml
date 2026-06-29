@@ -26,6 +26,12 @@ jobs:
           - name: Ubuntu 26.04
             image: ubuntu:26.04
             install: apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y ansible-core git
+          - name: CentOS Stream 9
+            image: quay.io/centos/centos:stream9
+            install: dnf install -y ansible-core git
+          - name: CentOS Stream 10
+            image: quay.io/centos/centos:stream10
+            install: dnf install -y ansible-core git
     container:
       image: ${{ matrix.image }}
     steps:
