@@ -9,7 +9,6 @@
     sno_base_dir: /tmp/sno-rendered
     sno_pool_dir: /tmp/sno-rendered/pool
     sno_tf_dir: /tmp/sno-rendered
-    sno_pull_secret_path: /tmp/openshift-pull-secret/openshift-pull-secret.txt
     sno_installer_path: /tmp/sno-rendered/openshift-install
     sno_manifests_dir: /tmp/sno-rendered/generated/ocp4
     _sno_ssh_pubkey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForCITesting ci@github-actions"
