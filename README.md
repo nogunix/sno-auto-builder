@@ -17,11 +17,8 @@ Automatically deploy **OpenShift Single Node (SNO)** on Fedora / RHEL / CentOS S
 > This project automates the entire stack end-to-end with two `ansible-playbook` commands, targeting a standard 32 GB mini PC.
 >
 > **Use cases:**
-> - Learning OpenShift and preparing for certification (EX280)
 > - Testing Operators and custom workloads on a full OCP cluster
-> - Simulating proxy / air-gap / edge environments
 > - Home lab with a production-like setup
-> - Quick demo environments for Red Hat partners and customers
 
 ## Comparison with OpenShift Local (CRC)
 
