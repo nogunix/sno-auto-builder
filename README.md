@@ -28,6 +28,10 @@ ISO generation and installation monitoring are handled directly by `openshift-in
 
 This project provides the cluster-specific configuration (`install-config.yaml.j2`, `agent-config.yaml.j2`) and the libvirt infrastructure (bastion VM, networks, SNO master VM).
 
+**Official documentation:**
+- [Installing on a single node (SNO)](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html-single/installing_on_a_single_node/index)
+- [Agent-based Installer](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html-single/installing_an_on-premise_cluster_with_the_agent-based_installer/index)
+
 ```
 Host (localhost)
   install-config.yaml.j2 ──render──► install-config.yaml ──┐
