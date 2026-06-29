@@ -101,6 +101,9 @@ The bastion VM is lightweight (DNS, proxy, HAProxy only) and rarely needs more t
   A Red Hat Developer account is required (free): https://developers.redhat.com/register  
   Download the pull secret from Red Hat Console: https://console.redhat.com/openshift/install/pull-secret
 
+  > **Note:** Without a paid Red Hat subscription, OpenShift runs as a **60-day evaluation**.  
+  > For home lab / learning purposes the evaluation period is typically sufficient.
+
 ### Fedora
 
 ```bash
