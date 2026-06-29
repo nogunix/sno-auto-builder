@@ -5,7 +5,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![GitHub last commit](https://img.shields.io/github/last-commit/nogunix/sno-auto-builder)
 
-Automatically deploy **OpenShift Single Node (SNO)** on Fedora / RHEL / CentOS Stream + libvirt using the **Agent-based installer**.
+Automatically deploy **OpenShift Single Node (SNO)** on Fedora / RHEL / CentOS Stream / Ubuntu + libvirt using the **Agent-based installer**.
+
+**CI tested on:** Fedora 43 · Fedora 44 · CentOS Stream 9 · CentOS Stream 10 · Ubuntu 24.04 · Ubuntu 26.04
 
 **SNO** is an OpenShift cluster topology that runs all control-plane components on a single master node.  
 **Bastion VM** hosts DNS, proxy, and load balancer services, and acts as the jump host for `oc` commands.
@@ -94,7 +96,7 @@ The bastion VM is lightweight (DNS, proxy, HAProxy only) and rarely needs more t
 
 ## Prerequisites
 
-- Fedora / RHEL 9+ / CentOS Stream 9 + libvirt/KVM
+- Fedora / RHEL 9+ / CentOS Stream 9+ / Ubuntu 22.04+ + libvirt/KVM
 - `ansible-core` / `opentofu` / `sshpass`
 - OpenShift pull secret at `~/openshift-pull-secret/openshift-pull-secret.txt`
 
@@ -110,7 +112,7 @@ The bastion VM is lightweight (DNS, proxy, HAProxy only) and rarely needs more t
 sudo dnf install -y ansible-core opentofu sshpass
 ```
 
-### RHEL 9+ / CentOS Stream 9
+### RHEL 9+ / CentOS Stream 9+
 
 ```bash
 # RHEL only: enable EPEL (provides sshpass)
@@ -122,15 +124,23 @@ sudo curl -Lo /etc/yum.repos.d/opentofu.repo \
 sudo dnf install -y ansible-core opentofu sshpass
 ```
 
+### Ubuntu 22.04+
+
+```bash
+# Add OpenTofu repo and install packages
+curl -fsSL https://get.opentofu.org/install-opentofu.sh | sudo sh -s -- --install-method deb
+sudo apt-get install -y ansible-core sshpass
+```
+
 ### libvirt daemons
 
 ```bash
-# Fedora / RHEL 9+ / CentOS Stream 9 (modular daemons)
+# Fedora / RHEL 9+ / CentOS Stream 9+ (modular daemons)
 for drv in qemu interface network nodedev nwfilter secret storage; do
   sudo systemctl enable --now virt${drv}d.service
 done
 
-# RHEL 8 (monolithic daemon)
+# Ubuntu
 # sudo systemctl enable --now libvirtd
 ```
 
