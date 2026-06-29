@@ -20,75 +20,6 @@ Automatically deploy **OpenShift Single Node (SNO)** on Fedora / RHEL / CentOS S
 > - Testing Operators and custom workloads on a full OCP cluster
 > - Home lab with a production-like setup
 
-## Comparison with OpenShift Local (CRC)
-
-[OpenShift Local](https://developers.redhat.com/products/openshift-local/overview) is the easiest way to run OpenShift on a laptop. This project targets a different use case:
-
-| | OpenShift Local (CRC) | sno-auto-builder |
-|---|---|---|
-| Setup | `crc start` | 2 `ansible-playbook` commands |
-| Cluster | Stripped-down, some operators disabled | **Full OCP** — all operators enabled |
-| Network | Host-only | Bastion + DNS + proxy + HAProxy |
-| Proxy/air-gap testing | No | **Yes** (squid included) |
-| OS | macOS / Windows / Linux | Linux (libvirt/KVM) |
-| RAM | 10.5 GB+ | 32 GB+ |
-| Pull secret | Not required | Required |
-
-**Use this project if you need a production-like SNO environment** — edge deployment testing, proxy/air-gap scenarios, or validating configs before deploying on real hardware.
-
-## Installation Method: Agent-based Installer
-
-ISO generation and installation monitoring are handled directly by `openshift-install` — no external Ansible collections beyond `ansible.posix` are required.
-
-| Step | Command |
-|---|---|
-| ISO generation | `openshift-install agent create image --dir <manifests>` |
-| Bootstrap monitoring | `openshift-install agent wait-for bootstrap-complete` |
-| Install monitoring | `openshift-install agent wait-for install-complete` |
-
-This project provides the cluster-specific configuration (`install-config.yaml.j2`, `agent-config.yaml.j2`) and the libvirt infrastructure (bastion VM, networks, SNO master VM).
-
-**Official documentation:**
-- [Installing on a single node (SNO)](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html-single/installing_on_a_single_node/index)
-- [Agent-based Installer](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html-single/installing_an_on-premise_cluster_with_the_agent-based_installer/index)
-
-```
-Host (localhost)
-  install-config.yaml.j2 ──render──► install-config.yaml ──┐
-  agent-config.yaml.j2   ──render──► agent-config.yaml   ──┤
-                                                             ▼
-                                     openshift-install agent create image
-                                                             │
-                                                             ▼
-                                                    agent.x86_64.iso
-                                                             │
-                                                          boot
-                                                             ▼
-                                              SNO master VM (RHCOS)
-                                               ├─ discovers hardware
-                                               ├─ writes RHCOS to disk
-                                               └─ bootstraps OpenShift
-                                                             │
-                                     openshift-install agent wait-for
-                                      (bootstrap-complete / install-complete)
-                                                             │
-                                               SNO master running
-                                               etcd · kube-apiserver
-                                               kubelet · OVN · …
-```
-
-```
-Host (Fedora / RHEL / CentOS Stream / Ubuntu + libvirt)
-  ├─ bastion VM (CentOS Stream)   192.168.222.10 / 192.168.10.2
-  │    dnsmasq · squid · HAProxy · NFS · chrony · oc
-  └─ SNO master VM (RHCOS)        192.168.10.10
-       control-plane · etcd · ingress · kubelet … all on one node
-
-Networks
-  default_network   192.168.222.0/24  NAT  host ↔ bastion (management)
-  sno01_network     192.168.10.0/24   NAT  bastion ↔ master (cluster L2)
-```
-
 ## Host Requirements
 
 Designed to run on a mini PC with **32 GB RAM**:
@@ -105,18 +36,6 @@ Designed to run on a mini PC with **32 GB RAM**:
 |---|---|---|---|
 | bastion (CentOS Stream) | 2 | 4 GB | 20 GB |
 | SNO master (RHCOS) | 8 | 20 GB | 120 GB |
-
-## Scaling Up
-
-If you have more resources, increase the SNO master allocation in `vars.yml` for better workload capacity:
-
-```yaml
-sno_master_vcpu: 16       # more vCPUs for heavier workloads
-sno_master_memory: 32     # more RAM for running more pods
-sno_master_disk_size: 200 # more disk for persistent volumes
-```
-
-The bastion VM is lightweight (DNS, proxy, HAProxy only) and rarely needs more than the default 2 vCPU / 4 GB.
 
 ## Prerequisites
 
@@ -178,6 +97,9 @@ Review all items marked with `[CHANGE]`.
 ```bash
 git clone https://github.com/nogunix/sno-auto-builder.git
 cd sno-auto-builder
+
+# Install Ansible collection dependencies
+ansible-galaxy collection install -r requirements.yml
 
 # Step 1: provision bastion VM + generate Agent ISO on localhost (~5 min)
 ansible-playbook 01-infra-bastion.yml
@@ -271,6 +193,87 @@ Log in with:
 
 ```bash
 ansible-playbook 99-destroy-all.yml
+```
+
+## Scaling Up
+
+If you have more resources, increase the SNO master allocation in `vars.yml` for better workload capacity:
+
+```yaml
+sno_master_vcpu: 16       # more vCPUs for heavier workloads
+sno_master_memory: 32     # more RAM for running more pods
+sno_master_disk_size: 200 # more disk for persistent volumes
+```
+
+The bastion VM is lightweight (DNS, proxy, HAProxy only) and rarely needs more than the default 2 vCPU / 4 GB.
+
+## Comparison with OpenShift Local (CRC)
+
+[OpenShift Local](https://developers.redhat.com/products/openshift-local/overview) is the easiest way to run OpenShift on a laptop. This project targets a different use case:
+
+| | OpenShift Local (CRC) | sno-auto-builder |
+|---|---|---|
+| Setup | `crc start` | 2 `ansible-playbook` commands |
+| Cluster | Stripped-down, some operators disabled | **Full OCP** — all operators enabled |
+| Network | Host-only | Bastion + DNS + proxy + HAProxy |
+| Proxy/air-gap testing | No | **Yes** (squid included) |
+| OS | macOS / Windows / Linux | Linux (libvirt/KVM) |
+| RAM | 10.5 GB+ | 32 GB+ |
+| Pull secret | Not required | Required |
+
+**Use this project if you need a production-like SNO environment** — edge deployment testing, proxy/air-gap scenarios, or validating configs before deploying on real hardware.
+
+## Installation Method: Agent-based Installer
+
+ISO generation and installation monitoring are handled directly by `openshift-install` — no external Ansible collections beyond `ansible.posix` are required.
+
+| Step | Command |
+|---|---|
+| ISO generation | `openshift-install agent create image --dir <manifests>` |
+| Bootstrap monitoring | `openshift-install agent wait-for bootstrap-complete` |
+| Install monitoring | `openshift-install agent wait-for install-complete` |
+
+This project provides the cluster-specific configuration (`install-config.yaml.j2`, `agent-config.yaml.j2`) and the libvirt infrastructure (bastion VM, networks, SNO master VM).
+
+**Official documentation:**
+- [Installing on a single node (SNO)](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html-single/installing_on_a_single_node/index)
+- [Agent-based Installer](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html-single/installing_an_on-premise_cluster_with_the_agent-based_installer/index)
+
+```
+Host (localhost)
+  install-config.yaml.j2 ──render──► install-config.yaml ──┐
+  agent-config.yaml.j2   ──render──► agent-config.yaml   ──┤
+                                                             ▼
+                                     openshift-install agent create image
+                                                             │
+                                                             ▼
+                                                    agent.x86_64.iso
+                                                             │
+                                                          boot
+                                                             ▼
+                                              SNO master VM (RHCOS)
+                                               ├─ discovers hardware
+                                               ├─ writes RHCOS to disk
+                                               └─ bootstraps OpenShift
+                                                             │
+                                     openshift-install agent wait-for
+                                      (bootstrap-complete / install-complete)
+                                                             │
+                                               SNO master running
+                                               etcd · kube-apiserver
+                                               kubelet · OVN · …
+```
+
+```
+Host (Fedora / RHEL / CentOS Stream / Ubuntu + libvirt)
+  ├─ bastion VM (CentOS Stream)   192.168.222.10 / 192.168.10.2
+  │    dnsmasq · squid · HAProxy · NFS · chrony · oc
+  └─ SNO master VM (RHCOS)        192.168.10.10
+       control-plane · etcd · ingress · kubelet … all on one node
+
+Networks
+  default_network   192.168.222.0/24  NAT  host ↔ bastion (management)
+  sno01_network     192.168.10.0/24   NAT  bastion ↔ master (cluster L2)
 ```
 
 ## License
