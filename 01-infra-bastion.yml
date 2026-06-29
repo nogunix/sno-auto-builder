@@ -172,6 +172,19 @@
     - vars.yml
 
   tasks:
+    - name: Verify pull secret exists
+      ansible.builtin.stat:
+        path: "{{ sno_pull_secret_path }}"
+      register: pull_secret_stat
+
+    - name: Fail with helpful message if pull secret is missing
+      ansible.builtin.fail:
+        msg: |
+          Pull secret not found: {{ sno_pull_secret_path }}
+          Download it from https://console.redhat.com/openshift/install/pull-secret
+          and place it at {{ sno_pull_secret_path }}
+      when: not pull_secret_stat.stat.exists
+
     - name: Create manifests directory structure
       ansible.builtin.file:
         path: "{{ sno_manifests_dir }}/openshift"
