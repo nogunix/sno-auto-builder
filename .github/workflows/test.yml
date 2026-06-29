@@ -14,12 +14,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Fedora 41
-            image: fedora:41
+          - name: Fedora 43
+            image: fedora:43
+            install: dnf install -y ansible-core git
+          - name: Fedora 44
+            image: fedora:44
             install: dnf install -y ansible-core git
           - name: Ubuntu 24.04
             image: ubuntu:24.04
-            install: apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y ansible git
+            install: apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y ansible-core git
+          - name: Ubuntu 26.04
+            image: ubuntu:26.04
+            install: apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y ansible-core git
     container:
       image: ${{ matrix.image }}
     steps:
