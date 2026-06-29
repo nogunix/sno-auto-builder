@@ -89,8 +89,8 @@ The bastion VM is lightweight (DNS, proxy, HAProxy only) and rarely needs more t
 - `ansible-core` / `opentofu` / `sshpass`
 - OpenShift pull secret at `~/openshift-pull-secret/openshift-pull-secret.txt`
 
-  Download from [Red Hat Console](https://console.redhat.com/openshift/install/pull-secret).  
-  A [free 60-day developer trial](https://developers.redhat.com/) is available if you do not have a Red Hat subscription.
+  A Red Hat Developer account is required (free): https://developers.redhat.com/register  
+  Download the pull secret from Red Hat Console: https://console.redhat.com/openshift/install/pull-secret
 
 ### Fedora
 
