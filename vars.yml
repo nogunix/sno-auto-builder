@@ -26,17 +26,17 @@ sno_pull_secret_path: "{{ lookup('env', 'HOME') }}/openshift-pull-secret/openshi
 sno_bastion_ip: "192.168.222.10"
 sno_bastion_user: "rhel"
 sno_bastion_password: "redhat"
-sno_bastion_vcpu: 4
-sno_bastion_memory: 8
-sno_bastion_disk_size: 25
+sno_bastion_vcpu: 2
+sno_bastion_memory: 4
+sno_bastion_disk_size: 20
 sno_bastion_os_image: "https://cloud.centos.org/centos/9-stream/x86_64/images/CentOS-Stream-GenericCloud-x86_64-9-latest.x86_64.qcow2"
 sno_bastion_mac_mgmt: "52:54:00:a1:23:10"   # NIC on default_network (management, DHCP)
 sno_bastion_mac_sno: "52:54:00:26:a1:02"    # NIC on sno_network (cluster access, static)
 
 # SNO Master VM Configuration
 sno_master_vcpu: 8
-sno_master_memory: 24
-sno_master_disk_size: 150
+sno_master_memory: 20
+sno_master_disk_size: 120
 sno_cluster_os_image_name: "agent.x86_64.iso"
 
 # [CHANGE] SNO Cluster network parameters — used in install-config.yaml.j2, agent-config.yaml.j2, and helper_node.sh.j2
