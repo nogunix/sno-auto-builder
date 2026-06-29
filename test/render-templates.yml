@@ -1,0 +1,46 @@
+---
+- name: Render templates for CI validation
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - "{{ playbook_dir }}/../vars.yml"
+  vars:
+    sno_base_dir: /tmp/sno-rendered
+    sno_pool_dir: /tmp/sno-rendered/pool
+    sno_tf_dir: /tmp/sno-rendered
+    sno_pull_secret_path: /tmp/openshift-pull-secret/openshift-pull-secret.txt
+    sno_installer_path: /tmp/sno-rendered/openshift-install
+    sno_manifests_dir: /tmp/sno-rendered/generated/ocp4
+    _sno_ssh_pubkey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForCITesting ci@github-actions"
+  tasks:
+    - name: Create output directory
+      ansible.builtin.file:
+        path: /tmp/sno-rendered
+        state: directory
+        mode: "0755"
+
+    - name: Render infra.tf
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../templates/infra.tf.j2"
+        dest: /tmp/sno-rendered/infra.tf
+
+    - name: Render bastion.tf
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../templates/bastion.tf.j2"
+        dest: /tmp/sno-rendered/{{ sno_prefix }}_bastion0.tf
+
+    - name: Render master.tf
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../templates/master.tf.j2"
+        dest: /tmp/sno-rendered/{{ sno_prefix }}_master0.tf
+
+    - name: Render install-config.yaml
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../templates/install-config.yaml.j2"
+        dest: /tmp/sno-rendered/install-config.yaml
+
+    - name: Render agent-config.yaml
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../templates/agent-config.yaml.j2"
+        dest: /tmp/sno-rendered/agent-config.yaml

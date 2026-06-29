@@ -1,0 +1,68 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  syntax-check:
+    name: Syntax check / ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Fedora 41
+            image: fedora:41
+            install: dnf install -y ansible-core git
+          - name: Ubuntu 24.04
+            image: ubuntu:24.04
+            install: apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y ansible git
+    container:
+      image: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ansible-core
+        run: ${{ matrix.install }}
+
+      - name: Install Ansible collections
+        run: ansible-galaxy collection install -r requirements.yml
+
+      - name: Run syntax check
+        run: |
+          for pb in 01-infra-bastion.yml 02-create-sno-cluster.yml 03-expose-console.yml 99-destroy-all.yml; do
+            ansible-playbook --syntax-check -i test/inventory "$pb"
+          done
+
+  validate-templates:
+    name: Template render + tofu validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up OpenTofu
+        uses: opentofu/setup-opentofu@v1
+
+      - name: Install ansible-core
+        run: pip install ansible-core
+
+      - name: Install Ansible collections
+        run: ansible-galaxy collection install -r requirements.yml
+
+      - name: Create fake pull secret
+        run: |
+          mkdir -p /tmp/openshift-pull-secret
+          echo '{"auths":{"fake.example.com":{"auth":"ZmFrZTpmYWtl"}}}' \
+            > /tmp/openshift-pull-secret/openshift-pull-secret.txt
+
+      - name: Render templates
+        run: ansible-playbook test/render-templates.yml
+
+      - name: tofu init
+        run: tofu -chdir=/tmp/sno-rendered init
+
+      - name: tofu validate
+        run: tofu -chdir=/tmp/sno-rendered validate
