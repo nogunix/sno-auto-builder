@@ -1,9 +1,16 @@
 # sno-auto-builder
 
+[![Lint](https://github.com/nogunix/sno-auto-builder/actions/workflows/lint.yml/badge.svg)](https://github.com/nogunix/sno-auto-builder/actions/workflows/lint.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Automatically deploy **OpenShift Single Node (SNO)** on Fedora / RHEL / CentOS Stream + libvirt using the **Agent-based installer**.
 
 **SNO** is an OpenShift cluster topology that runs all control-plane components on a single master node.  
 **Bastion VM** hosts DNS, proxy, and load balancer services, and acts as the jump host for `oc` commands.
+
+> **Why this project?**  
+> Running a full OpenShift cluster at home is notoriously tricky — pull secret wrangling, DNS quirks, HAProxy config, Agent ISO generation, and KVM networking all need to line up perfectly.  
+> This project automates the entire stack end-to-end with two `ansible-playbook` commands, targeting a standard 32 GB mini PC.
 
 ## Installation Method: Agent-based Installer
 
