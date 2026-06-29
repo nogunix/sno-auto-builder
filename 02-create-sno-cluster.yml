@@ -104,3 +104,10 @@
         dest: /root/kubeconfig
         mode: '0600'
       become: true
+
+    - name: Set KUBECONFIG in root .bashrc
+      ansible.builtin.lineinfile:
+        path: /root/.bashrc
+        line: "export KUBECONFIG=/root/kubeconfig"
+        state: present
+      become: true
