@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Repo Does
 
-Automates deployment of **OpenShift Single Node (SNO)** on a Fedora/RHEL/CentOS Stream host using Ansible + OpenTofu (Terraform-compatible) + libvirt/KVM. Two VMs are provisioned: a bastion (CentOS Stream) and an SNO master (RHCOS).
+Automates deployment of **OpenShift Single Node (SNO)** on a Fedora/RHEL/CentOS Stream/Ubuntu host using Ansible + OpenTofu (Terraform-compatible) + libvirt/KVM. Two VMs are provisioned: a bastion (CentOS Stream) and an SNO master (RHCOS).
 
 ## Running the Playbooks
 
@@ -33,7 +33,7 @@ CI uses `ansible-lint` (GitHub Actions, `ansible/ansible-lint@v25`). Run locally
 ansible-lint
 ```
 
-There is no unit test suite; `ansible-lint` is the sole automated check.
+There is no unit test suite; `ansible-lint` is the sole linting check.
 
 ## Architecture
 
@@ -89,4 +89,8 @@ All tunable parameters are in `vars.yml`. Fields marked `[CHANGE]` must be revie
 ## CI
 
 - **Lint** (`.github/workflows/lint.yml`): runs `ansible-lint` on every push/PR to `main`
+- **Test** (`.github/workflows/test.yml`): runs on every push/PR to `main`
+  - **Syntax check**: `ansible-playbook --syntax-check` on all 4 playbooks, across 6 distros (Fedora 43/44, CentOS Stream 9/10, Ubuntu 24.04/26.04) using container jobs
+  - **Template render + tofu validate**: renders all Jinja2 templates with default vars and runs `tofu validate` on the generated `.tf` files
+  - Test playbook is `test-render.yml` (repo root); minimal inventory for syntax check is `test/inventory`
 - **OCP version check** (`.github/workflows/ocp-version-check.yml`): runs weekly (Monday 00:00 UTC), fetches the current stable OCP version, verifies download URLs for `oc`/`openshift-install`, re-runs `ansible-lint`, and opens a GitHub issue (or adds a comment to an existing one) if anything fails
