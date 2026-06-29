@@ -16,7 +16,7 @@ sno_tf_dir: "{{ sno_base_dir }}/work"
 
 # [CHANGE] OpenShift Version — pin to a specific release, e.g. "stable-4.21"
 # Pull secret — download from https://console.redhat.com/openshift/install/pull-secret
-sno_cluster_version: "stable-4.20"
+sno_cluster_version: "stable"
 sno_pull_secret_path: "{{ lookup('env', 'HOME') }}/openshift-pull-secret/openshift-pull-secret.txt"
 
 # Bastion VM Configuration
@@ -24,7 +24,7 @@ sno_pull_secret_path: "{{ lookup('env', 'HOME') }}/openshift-pull-secret/openshi
 # [CHANGE] sno_bastion_password — default is "redhat"; set via cloud-init in bastion.tf.j2
 # [CHANGE] sno_bastion_os_image — CentOS Stream 9 generic cloud image (cloud-init compatible qcow2)
 sno_bastion_ip: "192.168.222.10"
-sno_bastion_user: "rhel"
+sno_bastion_user: "redhat"
 sno_bastion_password: "redhat"
 sno_bastion_vcpu: 2
 sno_bastion_memory: 4
