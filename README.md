@@ -119,14 +119,24 @@ When complete, credentials are at:
 
 > Replace `ocp4` with your `sno_cluster_name` if you changed it in `vars.yml`.
 
-Access the cluster from the host:
+Access the cluster via the bastion VM (where `oc` is installed):
 
 ```bash
-export KUBECONFIG=~/sno-lab/work/generated/ocp4/auth/kubeconfig
+# Get the kubeadmin password
+cat ~/sno-lab/work/generated/ocp4/auth/kubeadmin-password
+
+# Log into the bastion
+~/sno-lab/work/sno01_login_bastion0.sh
+
+# On the bastion — log in to the cluster
+oc login https://api.ocp4.example.com:6443 -u kubeadmin -p <kubeadmin-password>
+
 oc get nodes
 oc get clusterversion
 oc get clusteroperators
 ```
+
+> Replace `sno01` with your `sno_prefix`, and `ocp4.example.com` with your `sno_cluster_name.sno_base_domain` if changed in `vars.yml`.
 
 ## Monitoring Deployment Progress
 
