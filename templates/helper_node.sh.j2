@@ -199,6 +199,9 @@ curl -OL https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/$CLUST
 tar xzvf openshift-client-linux.tar.gz -C /usr/local/bin/
 rm -f /usr/local/bin/README.md
 
+curl -OL https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/$CLUSTER_VERSION/openshift-install-linux.tar.gz
+tar xzvf openshift-install-linux.tar.gz -C /usr/local/bin/ openshift-install
+
 # Ensure /usr/local/bin is on sudo's secure_path so `sudo oc` works
 echo 'Defaults secure_path = /sbin:/bin:/usr/sbin:/usr/bin:/usr/local/bin' > /etc/sudoers.d/local_path
 chmod 440 /etc/sudoers.d/local_path
@@ -207,6 +210,7 @@ export PATH=$PATH:/usr/local/bin
 oc completion bash > /etc/bash_completion.d/oc_bash_completion
 
 oc version
+openshift-install version
 
 cat <<EOF > /etc/helper_node_setup_info
 [Setup Information]
