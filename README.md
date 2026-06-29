@@ -75,18 +75,10 @@ Networks
 
 - Fedora / RHEL 9+ / CentOS Stream 9 + libvirt/KVM
 - `ansible-core` / `opentofu` / `sshpass`
-- OpenShift pull secret (`~/openshift-pull-secret/openshift-pull-secret.txt`)  
-  → Download from [Red Hat Console](https://console.redhat.com/openshift/install/pull-secret).
+- OpenShift pull secret at `~/openshift-pull-secret/openshift-pull-secret.txt`
 
-  | Account type | Use case |
-  |---|---|
-  | **Red Hat Developer Account (free)** | Sufficient for development and testing. [Register here](https://developers.redhat.com/) |
-  | **Red Hat Subscription (paid)** | For production environments with full support |
-
-  How to obtain:  
-  1. Log in to [Red Hat Console](https://console.redhat.com/openshift/install/pull-secret) with either account type  
-  2. Click "Download pull secret" to download the JSON file  
-  3. Place it at `~/openshift-pull-secret/openshift-pull-secret.txt`
+  Download from [Red Hat Console](https://console.redhat.com/openshift/install/pull-secret).  
+  A [free 60-day developer trial](https://developers.redhat.com/) is available if you do not have a Red Hat subscription.
 
 ### Fedora
 
