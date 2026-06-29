@@ -1,0 +1,26 @@
+upstream sno_ingress_https {
+    server {{ sno_ingress_vip }}:443;
+}
+
+upstream sno_ingress_http {
+    server {{ sno_ingress_vip }}:80;
+}
+
+upstream sno_api {
+    server {{ sno_api_vip }}:6443;
+}
+
+server {
+    listen 443;
+    proxy_pass sno_ingress_https;
+}
+
+server {
+    listen 80;
+    proxy_pass sno_ingress_http;
+}
+
+server {
+    listen 6443;
+    proxy_pass sno_api;
+}

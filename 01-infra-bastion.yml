@@ -1,0 +1,274 @@
+---
+- name: SNO - Host SELinux preparation (Fedora/RHEL/CentOS Stream)
+  hosts: localhost
+  gather_facts: true
+  vars_files:
+    - vars.yml
+
+  tasks:
+    - name: Ensure policycoreutils-python-utils is installed (provides semanage)
+      ansible.builtin.dnf:
+        name: policycoreutils-python-utils
+        state: present
+      become: true
+      when:
+        - ansible_facts['selinux'].status == 'enabled'
+        - ansible_facts['os_family'] == 'RedHat'
+
+    - name: Ensure libvirt directories exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - "{{ sno_pool_dir }}"
+        - "{{ sno_tf_dir }}"
+
+    - name: Set SELinux virt_image_t context for libvirt directories
+      ansible.builtin.command:
+        cmd: semanage fcontext -a -t virt_image_t "{{ item }}(/.*)?"
+      become: true
+      loop:
+        - "{{ sno_pool_dir }}"
+        - "{{ sno_tf_dir }}"
+      register: semanage_result
+      changed_when: semanage_result.rc == 0
+      failed_when: semanage_result.rc != 0 and 'already defined' not in semanage_result.stderr
+      when: ansible_facts['selinux'].status == 'enabled'
+
+    - name: Apply SELinux contexts to libvirt directories
+      ansible.builtin.command:
+        cmd: restorecon -Rv "{{ item }}"
+      become: true
+      loop:
+        - "{{ sno_pool_dir }}"
+        - "{{ sno_tf_dir }}"
+      register: restorecon_result
+      changed_when: restorecon_result.stdout != ''
+      when: ansible_facts['selinux'].status == 'enabled'
+
+- name: SNO - infrastructure + bastion
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - vars.yml
+
+  tasks:
+    - name: Remove legacy standalone .tf files superseded by infra.tf
+      ansible.builtin.file:
+        path: "{{ sno_tf_dir }}/{{ item }}"
+        state: absent
+      loop:
+        - main.tf
+        - pool.tf
+        - default_network.tf
+        - "{{ sno_prefix }}_network.tf"
+        - "{{ sno_prefix }}_cluster_master0.tf"
+
+    - name: Remove SNO master domain from tofu state if present (managed by 02-create-sno-cluster.yml)
+      ansible.builtin.command:
+        cmd: tofu state rm libvirt_domain.{{ sno_prefix }}_master0
+        chdir: "{{ sno_tf_dir }}"
+      failed_when: false
+      changed_when: false
+
+    - name: Generate OpenTofu manifests
+      ansible.builtin.template:
+        src: "templates/{{ item.src }}"
+        dest: "{{ sno_tf_dir }}/{{ item.dest }}"
+        mode: '0644'
+      loop:
+        - {src: infra.tf.j2, dest: "infra.tf"}
+        - {src: bastion.tf.j2, dest: "{{ sno_prefix }}_bastion0.tf"}
+
+    - name: OpenTofu init + apply (pool, networks, bastion VM)
+      ansible.builtin.shell: tofu init && tofu apply -auto-approve
+      args:
+        chdir: "{{ sno_tf_dir }}"
+      register: tf_apply
+      changed_when: "'Apply complete!' in tf_apply.stdout"
+
+    - name: Get bastion IP from libvirt
+      ansible.builtin.command:
+        cmd: virsh -c qemu:///system domifaddr {{ sno_prefix }}_bastion0
+      register: domifaddr_out
+      changed_when: false
+      retries: 10
+      delay: 10
+      until: "'ipv4' in domifaddr_out.stdout"
+
+    - name: Set bastion IP fact
+      ansible.builtin.set_fact:
+        sno_bastion_ip: "{{ domifaddr_out.stdout | regex_search('ipv4\\s+(\\S+)', '\\1') | first | split('/') | first }}"
+
+    - name: Wait for bastion SSH
+      ansible.builtin.wait_for:
+        host: "{{ sno_bastion_ip }}"
+        port: 22
+        timeout: 300
+
+    - name: Generate login_bastion.sh
+      ansible.builtin.copy:
+        content: |
+          #!/bin/bash
+          sshpass -p {{ sno_bastion_password }} ssh {{ sno_bastion_user }}@{{ sno_bastion_ip }} \
+            -o LogLevel=ERROR -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$@"
+        dest: "{{ sno_tf_dir }}/{{ sno_prefix }}_login_bastion0.sh"
+        mode: '0755'
+
+    - name: Add bastion to dynamic inventory
+      ansible.builtin.add_host:
+        name: bastion_server
+        ansible_host: "{{ sno_bastion_ip }}"
+        ansible_user: "{{ sno_bastion_user }}"
+        ansible_password: "{{ sno_bastion_password }}"
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+
+- name: SNO - configure bastion helper services
+  hosts: bastion_server
+  gather_facts: false
+  vars_files:
+    - vars.yml
+
+  tasks:
+    - name: Wait for SSH to become available
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+
+    - name: Check if helper node is already setup
+      ansible.builtin.stat:
+        path: /etc/helper_node_setup_info
+      register: helper_setup_check
+
+    - name: Copy pull secret and setup helper services
+      when: not helper_setup_check.stat.exists
+      block:
+        - name: Copy pull secret to root
+          ansible.builtin.copy:
+            src: "{{ sno_pull_secret_path }}"
+            dest: /root/openshift-pull-secret
+            mode: '0600'
+          become: true
+
+        - name: Generate and copy helper_node.sh
+          ansible.builtin.template:
+            src: "{{ playbook_dir }}/templates/helper_node.sh.j2"
+            dest: /root/helper_node.sh
+            mode: '0755'
+          become: true
+
+        - name: Run helper_node.sh
+          ansible.builtin.command: bash /root/helper_node.sh
+          environment:
+            PLATFORM: none
+            CLUSTER_VERSION: "{{ sno_cluster_version }}"
+          become: true
+          changed_when: true
+
+- name: SNO - generate agent ISO on localhost
+  hosts: localhost
+  gather_facts: true
+  vars_files:
+    - vars.yml
+
+  tasks:
+    - name: Create manifests directory structure
+      ansible.builtin.file:
+        path: "{{ sno_manifests_dir }}/openshift"
+        state: directory
+        mode: '0755'
+        recurse: true
+
+    - name: Generate SSH keypair for cluster access if absent
+      ansible.builtin.command:
+        cmd: "ssh-keygen -t ed25519 -N '' -f {{ sno_tf_dir }}/openshift_rsa"
+        creates: "{{ sno_tf_dir }}/openshift_rsa"
+
+    - name: Read SSH public key
+      ansible.builtin.slurp:
+        src: "{{ sno_tf_dir }}/openshift_rsa.pub"
+      register: _sno_ssh_pubkey_b64
+
+    - name: Set SSH public key fact
+      ansible.builtin.set_fact:
+        _sno_ssh_pubkey: "{{ _sno_ssh_pubkey_b64.content | b64decode | trim }}"
+
+    - name: Download openshift-install tarball
+      ansible.builtin.get_url:
+        url: "https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ sno_cluster_version }}/openshift-install-linux.tar.gz"
+        dest: "{{ sno_tf_dir }}/openshift-install-linux.tar.gz"
+        mode: '0644'
+
+    - name: Extract openshift-install binary
+      ansible.builtin.unarchive:
+        src: "{{ sno_tf_dir }}/openshift-install-linux.tar.gz"
+        dest: "{{ sno_tf_dir }}"
+        include:
+          - openshift-install
+        creates: "{{ sno_installer_path }}"
+
+    - name: Render install-config.yaml
+      ansible.builtin.template:
+        src: templates/install-config.yaml.j2
+        dest: "{{ sno_manifests_dir }}/install-config.yaml"
+        mode: '0600'
+
+    - name: Render agent-config.yaml
+      ansible.builtin.template:
+        src: templates/agent-config.yaml.j2
+        dest: "{{ sno_manifests_dir }}/agent-config.yaml"
+        mode: '0644'
+
+    - name: Write composefs MachineConfig for OCP 4.22+
+      ansible.builtin.copy:
+        dest: "{{ sno_manifests_dir }}/openshift/99-master-composefs-module.yaml"
+        mode: '0644'
+        content: |
+          apiVersion: machineconfiguration.openshift.io/v1
+          kind: MachineConfig
+          metadata:
+            labels:
+              machineconfiguration.openshift.io/role: master
+            name: 99-master-composefs-module
+          spec:
+            config:
+              ignition:
+                version: 3.4.0
+              storage:
+                files:
+                  - path: /etc/modules-load.d/composefs.conf
+                    mode: 0644
+                    overwrite: true
+                    contents:
+                      source: "data:,composefs%0A"
+              systemd:
+                units:
+                  - name: modprobe-composefs.service
+                    enabled: true
+                    contents: |
+                      [Unit]
+                      Description=Load composefs module for node-image-overlay
+                      Before=node-image-overlay.service
+                      DefaultDependencies=no
+
+                      [Service]
+                      Type=oneshot
+                      ExecStart=/sbin/modprobe composefs
+                      RemainAfterExit=yes
+
+                      [Install]
+                      WantedBy=sysinit.target
+
+    - name: Generate agent ISO
+      ansible.builtin.command:
+        cmd: "{{ sno_installer_path }} agent create image --dir {{ sno_manifests_dir }}"
+      environment:
+        XDG_RUNTIME_DIR: "{{ sno_manifests_dir }}"
+      changed_when: true
+
+    - name: Copy agent ISO to work directory
+      ansible.builtin.copy:
+        src: "{{ sno_manifests_dir }}/agent.x86_64.iso"
+        dest: "{{ sno_tf_dir }}/{{ sno_cluster_os_image_name }}"
+        remote_src: true
+        mode: '0644'

@@ -1,0 +1,60 @@
+---
+# ==============================================================================
+# SNO Auto Builder Variables
+# Customize the values in this file before running the playbooks.
+# Sections marked [CHANGE] contain values that typically need to be updated.
+# ==============================================================================
+
+# Environment Prefix — used as a name prefix for all libvirt resources
+sno_prefix: "sno01"
+
+# Host Paths — all generated files are placed under sno_base_dir
+# [CHANGE] sno_base_dir — base directory for all generated files (pool, tofu state, ISO, scripts)
+sno_base_dir: "{{ lookup('env', 'HOME') }}/sno-lab"
+sno_pool_dir: "{{ sno_base_dir }}/pool"
+sno_tf_dir: "{{ sno_base_dir }}/work"
+
+# [CHANGE] OpenShift Version — pin to a specific release, e.g. "stable-4.21"
+# Pull secret — download from https://console.redhat.com/openshift/install/pull-secret
+sno_cluster_version: "stable-4.20"
+sno_pull_secret_path: "{{ lookup('env', 'HOME') }}/openshift-pull-secret/openshift-pull-secret.txt"
+
+# Bastion VM Configuration
+# sno_bastion_ip must match the IP assigned to the bastion on default_network
+# [CHANGE] sno_bastion_password — default is "redhat"; set via cloud-init in bastion.tf.j2
+# [CHANGE] sno_bastion_os_image — CentOS Stream 9 generic cloud image (cloud-init compatible qcow2)
+sno_bastion_ip: "192.168.222.10"
+sno_bastion_user: "rhel"
+sno_bastion_password: "redhat"
+sno_bastion_vcpu: 4
+sno_bastion_memory: 8
+sno_bastion_disk_size: 25
+sno_bastion_os_image: "https://cloud.centos.org/centos/9-stream/x86_64/images/CentOS-Stream-GenericCloud-x86_64-9-latest.x86_64.qcow2"
+sno_bastion_mac_mgmt: "52:54:00:a1:23:10"   # NIC on default_network (management, DHCP)
+sno_bastion_mac_sno: "52:54:00:26:a1:02"    # NIC on sno_network (cluster access, static)
+
+# SNO Master VM Configuration
+sno_master_vcpu: 8
+sno_master_memory: 24
+sno_master_disk_size: 150
+sno_cluster_os_image_name: "agent.x86_64.iso"
+
+# [CHANGE] SNO Cluster network parameters — used in install-config.yaml.j2, agent-config.yaml.j2, and helper_node.sh.j2
+# sno_master_mac must match the NIC MAC defined in master.tf.j2
+# sno_interface is the NIC name inside RHCOS (verify with your hardware/VM config)
+# sno_api_vip / sno_ingress_vip are added to the bastion's cluster NIC by helper_node.sh
+sno_cluster_name: "ocp4"
+sno_base_domain: "example.com"
+sno_machine_network: "192.168.10.0/24"
+sno_proxy_ip: "192.168.10.2"   # also used as DNS server for the cluster
+sno_proxy_port: "3128"
+sno_master_ip: "192.168.10.10"
+sno_gateway: "192.168.10.1"
+sno_master_mac: "52:54:00:26:a1:10"
+sno_interface: "enp1s0"
+sno_api_vip: "192.168.10.100"
+sno_ingress_vip: "192.168.10.101"
+
+# Paths used for ISO generation on localhost and cluster monitoring (set by 01-infra-bastion.yml)
+sno_installer_path: "{{ sno_tf_dir }}/openshift-install"
+sno_manifests_dir: "{{ sno_tf_dir }}/generated/{{ sno_cluster_name }}"

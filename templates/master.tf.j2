@@ -1,0 +1,47 @@
+resource "libvirt_volume" "{{ sno_prefix }}_master0_0" {
+  name   = "{{ sno_prefix }}_master0_0.qcow2"
+  pool   = libvirt_pool.default.name
+  format = "qcow2"
+  size   = {{ sno_master_disk_size }} * 1024 * 1024 * 1024
+}
+
+resource "libvirt_domain" "{{ sno_prefix }}_master0" {
+  name      = "{{ sno_prefix }}_master0"
+  vcpu      = {{ sno_master_vcpu }}
+  memory    = {{ sno_master_memory }} * 1024
+  autostart = true
+
+  cpu {
+    mode = "host-passthrough"
+  }
+
+  network_interface {
+    network_id = libvirt_network.{{ sno_prefix }}_network.id
+    mac        = "{{ sno_master_mac }}"
+  }
+
+  disk {
+    file = "{{ sno_tf_dir }}/{{ sno_cluster_os_image_name }}"
+  }
+
+  disk {
+    volume_id = libvirt_volume.{{ sno_prefix }}_master0_0.id
+    scsi      = "true"
+  }
+
+  boot_device {
+    dev = ["hd", "cdrom"]
+  }
+
+  console {
+    type        = "pty"
+    target_type = "serial"
+    target_port = "0"
+  }
+
+  graphics {
+    type        = "vnc"
+    listen_type = "address"
+    autoport    = "true"
+  }
+}
