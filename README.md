@@ -58,7 +58,7 @@ Host (localhost)
 ```
 
 ```
-Host (Fedora / RHEL / CentOS Stream + libvirt)
+Host (Fedora / RHEL / CentOS Stream / Ubuntu + libvirt)
   ├─ bastion VM (CentOS Stream)   192.168.222.10 / 192.168.10.2
   │    dnsmasq · squid · HAProxy · NFS · chrony · oc
   └─ SNO master VM (RHCOS)        192.168.10.10
@@ -208,7 +208,7 @@ cd ~/sno-lab/work/generated/ocp4
 
 ## Web Console
 
-Run the following playbook to expose the console to your home network via an nginx stream proxy on the Fedora host:
+Run the following playbook to expose the console to your home network via an nginx stream proxy on the host:
 
 ```bash
 ansible-playbook 03-expose-console.yml
