@@ -59,7 +59,7 @@ jobs:
             > "$HOME/openshift-pull-secret/openshift-pull-secret.txt"
 
       - name: Render templates
-        run: ansible-playbook test/render-templates.yml
+        run: ansible-playbook test-render.yml
 
       - name: tofu init
         run: tofu -chdir=/tmp/sno-rendered init
