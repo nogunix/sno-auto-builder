@@ -175,9 +175,6 @@ Review all items marked with `[CHANGE]`.
 git clone https://github.com/nogunix/sno-auto-builder.git
 cd sno-auto-builder
 
-# Install Ansible collection dependencies
-ansible-galaxy collection install -r requirements.yml
-
 # Step 1: provision bastion VM + generate Agent ISO on localhost (~5 min)
 ansible-playbook 01-infra-bastion.yml
 
@@ -224,7 +221,13 @@ cd ~/sno-lab/work/generated/ocp4
 
 ## Web Console
 
-Run the following playbook to expose the console to your home network via an nginx stream proxy on the host:
+Run the following playbook to expose the console to your home network via an nginx stream proxy on the host.
+
+This playbook requires the `ansible.posix` collection. Install it first:
+
+```bash
+ansible-galaxy collection install -r requirements.yml
+```
 
 ```bash
 ansible-playbook 03-expose-console.yml
