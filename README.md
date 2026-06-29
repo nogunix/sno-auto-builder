@@ -56,20 +56,32 @@ Networks
 
 ## Host Requirements
 
-| Resource | Minimum | Notes |
+Designed to run on a mini PC with **32 GB RAM**:
+
+| Resource | Required | Notes |
 |---|---|---|
-| CPU | 12 cores / threads | Hardware virtualization (VT-x / AMD-V) required |
-| RAM | 36 GB | 32 GB for VMs + host OS |
-| Disk | 200 GB free | 175 GB for VM images + host OS |
+| CPU | 10 cores / threads | Hardware virtualization (VT-x / AMD-V) required |
+| RAM | 32 GB | 24 GB for VMs + 8 GB host OS |
+| Disk | 256 GB free | 140 GB for VM images + host OS |
 
 **VM breakdown (default `vars.yml`):**
 
 | VM | vCPU | RAM | Disk |
 |---|---|---|---|
-| bastion (CentOS Stream) | 4 | 8 GB | 25 GB |
-| SNO master (RHCOS) | 8 | 24 GB | 150 GB |
+| bastion (CentOS Stream) | 2 | 4 GB | 20 GB |
+| SNO master (RHCOS) | 8 | 20 GB | 120 GB |
 
-> Adjust VM sizes in `vars.yml` before running.
+## Scaling Up
+
+If you have more resources, increase the SNO master allocation in `vars.yml` for better workload capacity:
+
+```yaml
+sno_master_vcpu: 16       # more vCPUs for heavier workloads
+sno_master_memory: 32     # more RAM for running more pods
+sno_master_disk_size: 200 # more disk for persistent volumes
+```
+
+The bastion VM is lightweight (DNS, proxy, HAProxy only) and rarely needs more than the default 2 vCPU / 4 GB.
 
 ## Prerequisites
 
