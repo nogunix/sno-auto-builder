@@ -2,6 +2,7 @@
 
 [![Lint](https://github.com/nogunix/sno-auto-builder/actions/workflows/lint.yml/badge.svg)](https://github.com/nogunix/sno-auto-builder/actions/workflows/lint.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+![GitHub last commit](https://img.shields.io/github/last-commit/nogunix/sno-auto-builder)
 
 Automatically deploy **OpenShift Single Node (SNO)** on Fedora / RHEL / CentOS Stream + libvirt using the **Agent-based installer**.
 
@@ -230,3 +231,10 @@ Log in with:
 ```bash
 ansible-playbook 99-destroy-all.yml
 ```
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
+
+This is my personal project.
+It is created and maintained in my personal capacity, and has no relation to my employer's business or confidential information.
