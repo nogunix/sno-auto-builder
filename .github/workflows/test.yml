@@ -54,9 +54,9 @@ jobs:
 
       - name: Create fake pull secret
         run: |
-          mkdir -p /tmp/openshift-pull-secret
+          mkdir -p "$HOME/openshift-pull-secret"
           echo '{"auths":{"fake.example.com":{"auth":"ZmFrZTpmYWtl"}}}' \
-            > /tmp/openshift-pull-secret/openshift-pull-secret.txt
+            > "$HOME/openshift-pull-secret/openshift-pull-secret.txt"
 
       - name: Render templates
         run: ansible-playbook test/render-templates.yml
