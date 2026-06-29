@@ -22,8 +22,7 @@ Host (localhost)
   install-config.yaml.j2 ──render──► install-config.yaml ──┐
   agent-config.yaml.j2   ──render──► agent-config.yaml   ──┤
                                                              ▼
-                                     redhatci.ocp.generate_agent_iso
-                                      (openshift-install agent create image)
+                                     openshift-install agent create image
                                                              │
                                                              ▼
                                                     agent.x86_64.iso
@@ -35,8 +34,8 @@ Host (localhost)
                                                ├─ writes RHCOS to disk
                                                └─ bootstraps OpenShift
                                                              │
-                                     redhatci.ocp.monitor_agent_based_installer
-                                      (wait-for bootstrap-complete / install-complete)
+                                     openshift-install agent wait-for
+                                      (bootstrap-complete / install-complete)
                                                              │
                                                SNO master running
                                                etcd · kube-apiserver
@@ -130,7 +129,7 @@ Review all items marked with `[CHANGE]`.
 git clone https://github.com/nogunix/sno-auto-builder.git
 cd sno-auto-builder
 
-# Install Ansible collection dependencies (includes redhatci.ocp)
+# Install Ansible collection dependencies
 ansible-galaxy collection install -r requirements.yml
 
 # Step 1: provision bastion VM + generate Agent ISO on localhost (~5 min)
@@ -140,7 +139,7 @@ ansible-playbook 01-infra-bastion.yml
 ansible-playbook 02-create-sno-cluster.yml
 ```
 
-`02-create-sno-cluster.yml` boots the master VM and then waits for installation to finish using `redhatci.ocp.monitor_agent_based_installer`. The playbook exits once all cluster operators are available.
+`02-create-sno-cluster.yml` boots the master VM and then waits for installation to finish using `openshift-install agent wait-for`. The playbook exits once all cluster operators are available.
 
 When complete, credentials are at:
 
