@@ -16,6 +16,22 @@ Automatically deploy **OpenShift Single Node (SNO)** on Fedora / RHEL / CentOS S
 > Running a full OpenShift cluster at home is notoriously tricky — pull secret wrangling, DNS quirks, HAProxy config, Agent ISO generation, and KVM networking all need to line up perfectly.  
 > This project automates the entire stack end-to-end with two `ansible-playbook` commands, targeting a standard 32 GB mini PC.
 
+## Comparison with OpenShift Local (CRC)
+
+[OpenShift Local](https://developers.redhat.com/products/openshift-local/overview) is the easiest way to run OpenShift on a laptop. This project targets a different use case:
+
+| | OpenShift Local (CRC) | sno-auto-builder |
+|---|---|---|
+| Setup | `crc start` | 2 `ansible-playbook` commands |
+| Cluster | Stripped-down, some operators disabled | **Full OCP** — all operators enabled |
+| Network | Host-only | Bastion + DNS + proxy + HAProxy |
+| Proxy/air-gap testing | No | **Yes** (squid included) |
+| OS | macOS / Windows / Linux | Linux (libvirt/KVM) |
+| RAM | 10.5 GB+ | 32 GB+ |
+| Pull secret | Not required | Required |
+
+**Use this project if you need a production-like SNO environment** — edge deployment testing, proxy/air-gap scenarios, or validating configs before deploying on real hardware.
+
 ## Installation Method: Agent-based Installer
 
 ISO generation and installation monitoring are handled directly by `openshift-install` — no external Ansible collections beyond `ansible.posix` are required.
