@@ -74,6 +74,7 @@ Host (libvirt)
 - **Idempotency guard on bastion setup**: `helper_node.sh` writes `/etc/helper_node_setup_info` on completion; `01-infra-bastion.yml` skips the block if that file exists.
 - **ISO handoff**: the Agent ISO is generated on the bastion and `fetch`-ed back to `sno_tf_dir` on the host; the master VM references it as a local file path in its disk block.
 - **Bastion cluster NIC**: assigned a static IP via cloud-init network config in `bastion.tf.j2`; `helper_node.sh` then adds the api/ingress VIPs as additional addresses via `nmcli`.
+- **Bastion kubeconfig lives at the bastion user's `~/.kube/config`** (default user `redhat`), copied there by `02-create-sno-cluster.yml` — *not* `/root/kubeconfig`, and there is no `KUBECONFIG` env var. `oc`/`kubectl` find it via the default path. **Anything that runs `oc` on the bastion must run as the bastion user, not root** — root has no kubeconfig. `test/test-console.sh` uses `sudo -iu "$BASTION_USER"` for this reason; do not change it to `sudo -i` (root). The `oc`/`openshift-install` binaries are in `/usr/local/bin` (on the login PATH).
 
 ## Configuration
 
