@@ -41,14 +41,14 @@ There is no unit test suite; `ansible-lint` is the sole linting check.
 
 | Playbook | Runs on | What it does |
 |---|---|---|
-| `01-infra-bastion.yml` | localhost → bastion → localhost | Renders OpenTofu templates, calls `tofu apply` to create pool/networks/bastion VM, SSHes into bastion to install helper services (dnsmasq, squid, HAProxy, NFS, chrony), then generates the Agent ISO on **localhost** via `openshift-install agent create image` (ISO lands directly in `sno_tf_dir`) |
+| `01-infra-bastion.yml` | localhost → bastion → localhost | Renders OpenTofu templates, calls `tofu apply` to create pool/networks/bastion VM, SSHes into bastion to install helper services (dnsmasq, squid, HAProxy, NFS, chrony), then generates the Agent ISO on **localhost** via `openshift-install agent create image` (built in `sno_manifests_dir`, then copied to `sno_tf_dir`) |
 | `02-create-sno-cluster.yml` | localhost | Renders `master.tf.j2`, calls `tofu apply` to create the SNO master VM which boots from the Agent ISO |
 | `03-expose-console.yml` | localhost | Installs nginx on the host, configures SSL stream passthrough to the SNO ingress VIP, opens ports 80/443/6443 in firewalld |
 | `99-destroy-all.yml` | localhost | `tofu destroy`, manual `virsh undefine` fallbacks, removes `sno_base_dir`, cleans up nginx config |
 
 ### Template rendering flow
 
-All files in `templates/` are Jinja2 templates. Playbook `01` renders them into `sno_tf_dir` (`~/sno-lab/work/`) at runtime:
+All files in `templates/` are Jinja2 templates, rendered at runtime by the playbooks (most by `01`; `master.tf.j2` by `02`). Destinations vary as noted below:
 
 - `infra.tf.j2` → `infra.tf` — libvirt pool, `default_network` (NAT 192.168.222.0/24), `sno_prefix_network` (NAT, no DHCP)
 - `bastion.tf.j2` → `sno_prefix_bastion0.tf` — bastion VM with cloud-init (user/password, static IP on cluster NIC)
@@ -56,7 +56,8 @@ All files in `templates/` are Jinja2 templates. Playbook `01` renders them into 
 - `helper_node.sh.j2` → runs on bastion — installs dnsmasq/squid/HAProxy/NFS/chrony, downloads `oc` + `openshift-install` from `mirror.openshift.com`
 - `install-config.yaml.j2` → rendered on localhost into `sno_manifests_dir`
 - `agent-config.yaml.j2` → rendered on localhost into `sno_manifests_dir`; `openshift-install agent create image` then generates the ISO
-- `nginx-sno-stream.conf.j2` → `/etc/nginx/stream.d/sno.conf` — TCP stream proxy for ports 80/443/6443
+- `nginx.conf.j2` → `/etc/nginx/nginx.conf` — stream-only nginx config (rendered by `03`)
+- `nginx-sno-stream.conf.j2` → `/etc/nginx/stream.d/sno.conf` — TCP stream proxy for ports 80/443/6443 (rendered by `03`)
 
 ### Network topology
 
@@ -72,7 +73,7 @@ Host (libvirt)
 
 - **OpenTofu state is split**: infra (pool, networks, bastion) is managed by `01-infra-bastion.yml`; the master VM is managed by `02-create-sno-cluster.yml`. Playbook `01` explicitly removes `libvirt_domain.sno_prefix_master0` from state before applying, so re-running `01` never touches the master.
 - **Idempotency guard on bastion setup**: `helper_node.sh` writes `/etc/helper_node_setup_info` on completion; `01-infra-bastion.yml` skips the block if that file exists.
-- **ISO handoff**: the Agent ISO is generated on the bastion and `fetch`-ed back to `sno_tf_dir` on the host; the master VM references it as a local file path in its disk block.
+- **ISO handoff**: the Agent ISO is generated on **localhost** (not the bastion) by `openshift-install agent create image` into `sno_manifests_dir`, then copied to `sno_tf_dir`; the master VM references it as a local file path in its disk block.
 - **Bastion cluster NIC**: assigned a static IP via cloud-init network config in `bastion.tf.j2`; `helper_node.sh` then adds the api/ingress VIPs as additional addresses via `nmcli`.
 - **Bastion kubeconfig lives at the bastion user's `~/.kube/config`** (default user `redhat`), copied there by `02-create-sno-cluster.yml` — *not* `/root/kubeconfig`, and there is no `KUBECONFIG` env var. `oc`/`kubectl` find it via the default path. **Anything that runs `oc` on the bastion must run as the bastion user, not root** — root has no kubeconfig. `test/test-console.sh` uses `sudo -iu "$BASTION_USER"` for this reason; do not change it to `sudo -i` (root). The `oc`/`openshift-install` binaries are in `/usr/local/bin` (on the login PATH).
 
