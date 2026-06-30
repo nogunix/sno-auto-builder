@@ -74,13 +74,21 @@
         state: started
       become: true
 
-    - name: Show /etc/hosts entries for home devices
-      ansible.builtin.debug:
-        msg: |
-          Add these entries to /etc/hosts on each home device:
+    - name: Write /etc/hosts entries to file
+      ansible.builtin.copy:
+        dest: "{{ sno_base_dir }}/hosts-entries.txt"
+        content: |
           {{ ansible_facts['default_ipv4']['address'] }}  console-openshift-console.apps.{{ sno_cluster_name }}.{{ sno_base_domain }}
           {{ ansible_facts['default_ipv4']['address'] }}  oauth-openshift.apps.{{ sno_cluster_name }}.{{ sno_base_domain }}
           {{ ansible_facts['default_ipv4']['address'] }}  api.{{ sno_cluster_name }}.{{ sno_base_domain }}
+        mode: '0644'
+
+    - name: Show instructions for home devices
+      ansible.builtin.debug:
+        msg: >-
+          /etc/hosts entries saved to {{ sno_base_dir }}/hosts-entries.txt —
+          run: cat {{ sno_base_dir }}/hosts-entries.txt
+          then add the lines to /etc/hosts on each home device.
 
   handlers:
     - name: Reload nginx
