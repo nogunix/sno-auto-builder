@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-VARS_FILE="$(dirname "$0")/vars.yml"
+VARS_FILE="$(dirname "$0")/../vars.yml"
 if [[ ! -f "$VARS_FILE" ]]; then
     echo "ERROR: vars.yml not found. Run from the repo root." >&2
     exit 1
