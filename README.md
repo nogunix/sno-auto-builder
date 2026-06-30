@@ -169,7 +169,13 @@ ansible-playbook 03-expose-console.yml
 
 This installs nginx, configures SSL passthrough to the SNO ingress VIP, and opens ports 80/443/6443 in firewalld.
 
-At the end of the playbook, the required `/etc/hosts` entries are printed. Add them to each device on your home network:
+At the end of the playbook, the required `/etc/hosts` entries are saved to `~/sno-lab/hosts-entries.txt`. View them with:
+
+```bash
+cat ~/sno-lab/hosts-entries.txt
+```
+
+Add the entries to each device on your home network:
 
 ```
 <fedora-host-ip>  console-openshift-console.apps.ocp4.example.com
