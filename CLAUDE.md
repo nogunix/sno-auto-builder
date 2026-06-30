@@ -35,6 +35,25 @@ ansible-lint
 
 There is no unit test suite; `ansible-lint` is the sole linting check.
 
+## Local verification before pushing
+
+Reproduce the full CI suite locally before pushing (mirrors `lint.yml` + `test.yml`):
+
+```bash
+# 1. Lint (pip install --user ansible-lint if the command is missing)
+ansible-lint
+
+# 2. Syntax-check all playbooks
+ansible-playbook --syntax-check -i test/inventory \
+  01-infra-bastion.yml 02-create-sno-cluster.yml 03-expose-console.yml 99-destroy-all.yml
+
+# 3. Render templates with default vars, then validate the generated .tf
+ansible-playbook test-render.yml          # writes to /tmp/sno-rendered
+cd /tmp/sno-rendered && tofu init -backend=false && tofu validate
+```
+
+`test-render.yml` (repo root) renders `infra.tf.j2`, `bastion.tf.j2`, `master.tf.j2`, `install-config.yaml.j2`, and `agent-config.yaml.j2` — no libvirt or VMs needed, so this is safe to run anywhere.
+
 ## Architecture
 
 ### Playbook sequence
@@ -71,7 +90,7 @@ Host (libvirt)
 
 ### Key design decisions
 
-- **OpenTofu state is split**: infra (pool, networks, bastion) is managed by `01-infra-bastion.yml`; the master VM is managed by `02-create-sno-cluster.yml`. Playbook `01` explicitly removes `libvirt_domain.sno_prefix_master0` from state before applying, so re-running `01` never touches the master.
+- **OpenTofu state is split**: infra (pool, networks, bastion) is managed by `01-infra-bastion.yml`; the master VM is managed by `02-create-sno-cluster.yml`. Playbook `01` explicitly removes `libvirt_domain.sno_prefix_master0` from state before applying, so re-running `01` never touches the master. **Re-run safety:** `01` is safe to re-run — it leaves a running master untouched (and the bastion setup is idempotency-guarded). Re-running `02` re-renders `master.tf` and re-applies the master VM, so only re-run it when you intend to recreate/reconfigure the master.
 - **Idempotency guard on bastion setup**: `helper_node.sh` writes `/etc/helper_node_setup_info` on completion; `01-infra-bastion.yml` skips the block if that file exists.
 - **ISO handoff**: the Agent ISO is generated on **localhost** (not the bastion) by `openshift-install agent create image` into `sno_manifests_dir`, then copied to `sno_tf_dir`; the master VM references it as a local file path in its disk block.
 - **Bastion cluster NIC**: assigned a static IP via cloud-init network config in `bastion.tf.j2`; `helper_node.sh` then adds the api/ingress VIPs as additional addresses via `nmcli`.
