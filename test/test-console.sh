@@ -38,7 +38,9 @@ if [[ -z "$BASTION_IP" ]]; then
 fi
 ok "Bastion reachable at $BASTION_IP"
 
-SSH="sshpass -p $BASTION_PASSWORD ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null $BASTION_USER@$BASTION_IP sudo -i"
+# Run oc as the bastion user (kubeconfig lives at ~/.kube/config for that user).
+# -i gives a login shell so /usr/local/bin (oc, openshift-install) is on PATH.
+SSH="sshpass -p $BASTION_PASSWORD ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null $BASTION_USER@$BASTION_IP sudo -iu $BASTION_USER"
 
 # --- oc / openshift-install binaries ---
 echo ""
