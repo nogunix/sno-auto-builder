@@ -98,16 +98,20 @@
     - vars.yml
 
   tasks:
+    - name: Create .kube directory for bastion user
+      ansible.builtin.file:
+        path: "/home/{{ sno_bastion_user }}/.kube"
+        state: directory
+        mode: '0700'
+        owner: "{{ sno_bastion_user }}"
+        group: "{{ sno_bastion_user }}"
+      become: true
+
     - name: Copy kubeconfig to bastion
       ansible.builtin.copy:
         src: "{{ sno_manifests_dir }}/auth/kubeconfig"
-        dest: /root/kubeconfig
+        dest: "/home/{{ sno_bastion_user }}/.kube/config"
         mode: '0600'
-      become: true
-
-    - name: Set KUBECONFIG in root .bashrc
-      ansible.builtin.lineinfile:
-        path: /root/.bashrc
-        line: "export KUBECONFIG=/root/kubeconfig"
-        state: present
+        owner: "{{ sno_bastion_user }}"
+        group: "{{ sno_bastion_user }}"
       become: true
