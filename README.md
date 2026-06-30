@@ -122,7 +122,7 @@ Access the cluster via the bastion VM (where `oc` and kubeconfig are installed):
 # Log into the bastion
 ~/sno-lab/work/sno01_login_bastion0.sh
 
-# On the bastion — KUBECONFIG is set automatically
+# On the bastion — kubeconfig is at ~/.kube/config, so oc works out of the box
 oc get nodes
 oc get clusterversion
 oc get clusteroperators
