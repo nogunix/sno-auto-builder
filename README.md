@@ -200,6 +200,22 @@ Log in with:
 - **Username:** `kubeadmin`
 - **Password:** output of the command above
 
+## Verification
+
+After installation, verify cluster health and console reachability with the included test script:
+
+```bash
+bash test/test-console.sh
+```
+
+This checks:
+- Bastion VM reachability
+- `oc` and `openshift-install` binaries on the bastion
+- Node status (`Ready`)
+- Cluster version and all 34 cluster operators (`Available`)
+- nginx status and web console HTTP reachability (if `03-expose-console.yml` was run)
+- Prints `/etc/hosts` entries needed on client machines and the `kubeadmin` password
+
 ## Teardown
 
 ```bash
@@ -278,7 +294,7 @@ Host (localhost)
 ```
 Host (Fedora / RHEL / CentOS Stream / Ubuntu + libvirt)
   ├─ bastion VM (CentOS Stream)   192.168.222.10 / 192.168.10.2
-  │    dnsmasq · squid · HAProxy · NFS · chrony · oc
+  │    dnsmasq · squid · HAProxy · NFS · chrony · oc · openshift-install
   └─ SNO master VM (RHCOS)        192.168.10.10
        control-plane · etcd · ingress · kubelet … all on one node
 

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Verify SNO cluster health and web console reachability.
-# Run from the repo root after 02-create-sno-cluster.yml (and optionally 03-expose-console.yml).
+# Run after 02-create-sno-cluster.yml (and optionally 03-expose-console.yml).
 
 set -euo pipefail
 

@@ -14,7 +14,7 @@ sno_base_dir: "{{ lookup('env', 'HOME') }}/sno-lab"
 sno_pool_dir: "{{ sno_base_dir }}/pool"
 sno_tf_dir: "{{ sno_base_dir }}/work"
 
-# [CHANGE] OpenShift Version — pin to a specific release, e.g. "stable-4.21"
+# [CHANGE] OpenShift Version — pin to a specific release, e.g. "stable-4.22"
 # Pull secret — download from https://console.redhat.com/openshift/install/pull-secret
 sno_cluster_version: "stable"
 sno_pull_secret_path: "{{ lookup('env', 'HOME') }}/openshift-pull-secret/openshift-pull-secret.txt"
