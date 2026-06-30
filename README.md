@@ -98,9 +98,6 @@ Review all items marked with `[CHANGE]`.
 git clone https://github.com/nogunix/sno-auto-builder.git
 cd sno-auto-builder
 
-# Install Ansible collection dependencies
-ansible-galaxy collection install -r requirements.yml
-
 # Step 1: provision bastion VM + generate Agent ISO on localhost (~5 min)
 ansible-playbook 01-infra-bastion.yml
 
