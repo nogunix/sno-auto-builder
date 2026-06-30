@@ -108,7 +108,7 @@ ansible-playbook 01-infra-bastion.yml
 ansible-playbook 02-create-sno-cluster.yml
 ```
 
-`02-create-sno-cluster.yml` boots the master VM and then waits for installation to finish using `openshift-install agent wait-for`. The playbook exits once all cluster operators are available.
+`02-create-sno-cluster.yml` boots the master VM and then waits for installation to finish using `openshift-install agent wait-for`. The playbook exits once the installer reports installation complete. Cluster operators may take a few additional minutes to fully stabilize after the playbook finishes.
 
 When complete, credentials are at:
 
@@ -212,7 +212,7 @@ This checks:
 - Bastion VM reachability
 - `oc` and `openshift-install` binaries on the bastion
 - Node status (`Ready`)
-- Cluster version and all 34 cluster operators (`Available`)
+- Cluster version and all cluster operators (`Available`)
 - nginx status and web console HTTP reachability (if `03-expose-console.yml` was run)
 - Prints `/etc/hosts` entries needed on client machines and the `kubeadmin` password
 
@@ -232,7 +232,7 @@ sno_master_memory: 32     # more RAM for running more pods
 sno_master_disk_size: 200 # more disk for persistent volumes
 ```
 
-The bastion VM is lightweight (DNS, proxy, HAProxy only) and rarely needs more than the default 2 vCPU / 4 GB.
+The bastion VM (DNS, proxy, HAProxy, NFS, chrony) is lightweight and rarely needs more than the default 2 vCPU / 4 GB.
 
 ## Comparison with OpenShift Local (CRC)
 
