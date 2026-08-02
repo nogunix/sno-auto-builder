@@ -65,14 +65,14 @@
         - "{{ sno_prefix }}_network.tf"
         - "{{ sno_prefix }}_cluster_master0.tf"
 
-    - name: Remove SNO master domain from tofu state if present (managed by 02-create-sno-cluster.yml)
+    - name: Remove SNO master domain from terraform state if present (managed by 02-create-sno-cluster.yml)
       ansible.builtin.command:
-        cmd: tofu state rm libvirt_domain.{{ sno_prefix }}_master0
+        cmd: terraform state rm libvirt_domain.{{ sno_prefix }}_master0
         chdir: "{{ sno_tf_dir }}"
       failed_when: false
       changed_when: false
 
-    - name: Generate OpenTofu manifests
+    - name: Generate Terraform manifests
       ansible.builtin.template:
         src: "templates/{{ item.src }}"
         dest: "{{ sno_tf_dir }}/{{ item.dest }}"
@@ -81,25 +81,38 @@
         - {src: infra.tf.j2, dest: "infra.tf"}
         - {src: bastion.tf.j2, dest: "{{ sno_prefix }}_bastion0.tf"}
 
-    - name: OpenTofu init + apply (pool, networks, bastion VM)
-      ansible.builtin.shell: tofu init && tofu apply -auto-approve
-      args:
+    - name: Terraform init
+      ansible.builtin.command:
+        cmd: terraform init -input=false
+        chdir: "{{ sno_tf_dir }}"
+      register: tf_init
+      changed_when: "'has been successfully initialized' in tf_init.stdout"
+
+    - name: Terraform apply (pool, networks, bastion VM)
+      ansible.builtin.command:
+        cmd: terraform apply -auto-approve -input=false
         chdir: "{{ sno_tf_dir }}"
       register: tf_apply
       changed_when: "'Apply complete!' in tf_apply.stdout"
 
-    - name: Get bastion IP from libvirt
+    - name: Read bastion IP from the Terraform output
       ansible.builtin.command:
-        cmd: virsh -c qemu:///system domifaddr {{ sno_prefix }}_bastion0
-      register: domifaddr_out
+        cmd: terraform output -raw bastion_ip
+        chdir: "{{ sno_tf_dir }}"
+      register: tf_bastion_ip
       changed_when: false
-      retries: 10
-      delay: 10
-      until: "'ipv4' in domifaddr_out.stdout"
 
     - name: Set bastion IP fact
       ansible.builtin.set_fact:
-        sno_bastion_ip: "{{ domifaddr_out.stdout | regex_search('ipv4\\s+(\\S+)', '\\1') | first | split('/') | first }}"
+        sno_bastion_ip: "{{ tf_bastion_ip.stdout | trim }}"
+
+    - name: Assert the bastion received a DHCP lease
+      ansible.builtin.assert:
+        that:
+          - sno_bastion_ip is match('^\d{1,3}(\.\d{1,3}){3}$')
+        fail_msg: >-
+          The bastion has no management IP. Check the libvirt DHCP lease with
+          `virsh -c qemu:///system domifaddr {{ sno_prefix }}_bastion0`.
 
     - name: Wait for bastion SSH
       ansible.builtin.wait_for:
@@ -114,7 +127,9 @@
           sshpass -p {{ sno_bastion_password }} ssh {{ sno_bastion_user }}@{{ sno_bastion_ip }} \
             -o LogLevel=ERROR -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$@"
         dest: "{{ sno_tf_dir }}/{{ sno_prefix }}_login_bastion0.sh"
-        mode: '0755'
+        # Embeds the bastion password — keep it owner-only.
+        mode: '0700'
+      no_log: true
 
     - name: Add bastion to dynamic inventory
       ansible.builtin.add_host:
@@ -123,6 +138,7 @@
         ansible_user: "{{ sno_bastion_user }}"
         ansible_password: "{{ sno_bastion_password }}"
         ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      no_log: true
 
 - name: SNO - configure bastion helper services
   hosts: bastion_server
@@ -177,13 +193,14 @@
         path: "{{ sno_pull_secret_path }}"
       register: pull_secret_stat
 
-    - name: Fail with helpful message if pull secret is missing
-      ansible.builtin.fail:
-        msg: |
+    - name: Assert the pull secret is present
+      ansible.builtin.assert:
+        that:
+          - pull_secret_stat.stat.exists
+        fail_msg: |
           Pull secret not found: {{ sno_pull_secret_path }}
           Download it from https://console.redhat.com/openshift/install/pull-secret
           and place it at {{ sno_pull_secret_path }}
-      when: not pull_secret_stat.stat.exists
 
     - name: Create manifests directory structure
       ansible.builtin.file:

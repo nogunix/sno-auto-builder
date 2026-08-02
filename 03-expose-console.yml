@@ -6,6 +6,20 @@
     - vars.yml
 
   tasks:
+    # dnf, semanage, seboolean, firewalld and the /etc/nginx/stream.d layout below
+    # are all RedHat-family specific. Fail with a clear message rather than a
+    # confusing "dnf not found" partway through.
+    - name: Assert the host is a RedHat-family distribution
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['os_family'] == 'RedHat'
+        fail_msg: >-
+          03-expose-console.yml supports Fedora / RHEL / CentOS Stream only
+          (detected {{ ansible_facts['distribution'] }}
+          {{ ansible_facts['distribution_version'] }}). On other distributions,
+          proxy ports 80/443/6443 to {{ sno_ingress_vip }} / {{ sno_api_vip }}
+          by hand.
+
     - name: Install nginx and stream module
       ansible.builtin.dnf:
         name:
@@ -68,7 +82,7 @@
         - "6443"
 
     - name: Enable and start nginx
-      ansible.builtin.systemd:
+      ansible.builtin.systemd_service:
         name: nginx
         enabled: true
         state: started
@@ -92,7 +106,7 @@
 
   handlers:
     - name: Reload nginx
-      ansible.builtin.systemd:
+      ansible.builtin.systemd_service:
         name: nginx
         state: reloaded
       become: true

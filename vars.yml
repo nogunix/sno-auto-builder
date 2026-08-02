@@ -9,7 +9,7 @@
 sno_prefix: "sno01"
 
 # Host Paths — all generated files are placed under sno_base_dir
-# [CHANGE] sno_base_dir — base directory for all generated files (pool, tofu state, ISO, scripts)
+# [CHANGE] sno_base_dir — base directory for all generated files (pool, terraform state, ISO, scripts)
 sno_base_dir: "{{ lookup('env', 'HOME') }}/sno-lab"
 sno_pool_dir: "{{ sno_base_dir }}/pool"
 sno_tf_dir: "{{ sno_base_dir }}/work"
@@ -19,11 +19,17 @@ sno_tf_dir: "{{ sno_base_dir }}/work"
 sno_cluster_version: "stable"
 sno_pull_secret_path: "{{ lookup('env', 'HOME') }}/openshift-pull-secret/openshift-pull-secret.txt"
 
+# Management network (default_network) — host ↔ bastion, DHCP-assigned
+# The bastion's management IP is NOT fixed here: it comes from the libvirt DHCP
+# lease and is read back from the `bastion_ip` Terraform output at runtime.
+sno_mgmt_network: "192.168.222.0/24"
+sno_mgmt_bridge: "defbr0"
+
 # Bastion VM Configuration
-# sno_bastion_ip must match the IP assigned to the bastion on default_network
 # [CHANGE] sno_bastion_password — default is "redhat"; set via cloud-init in bastion.tf.j2
+#          Store it with ansible-vault rather than in plaintext for anything but a throwaway lab:
+#            ansible-vault encrypt_string 'yourpassword' --name sno_bastion_password
 # [CHANGE] sno_bastion_os_image — CentOS Stream 9 generic cloud image (cloud-init compatible qcow2)
-sno_bastion_ip: "192.168.222.10"
 sno_bastion_user: "redhat"
 sno_bastion_password: "redhat"
 sno_bastion_vcpu: 2

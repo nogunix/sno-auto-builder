@@ -26,7 +26,7 @@ resource "libvirt_domain" "{{ sno_prefix }}_master0" {
 
   disk {
     volume_id = libvirt_volume.{{ sno_prefix }}_master0_0.id
-    scsi      = "true"
+    scsi      = true
   }
 
   boot_device {
@@ -42,6 +42,6 @@ resource "libvirt_domain" "{{ sno_prefix }}_master0" {
   graphics {
     type        = "vnc"
     listen_type = "address"
-    autoport    = "true"
+    autoport    = true
   }
 }
