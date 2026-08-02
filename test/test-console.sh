@@ -14,9 +14,12 @@ _var() { grep "^$1:" "$VARS_FILE" | awk '{print $2}' | tr -d '"'; }
 
 CLUSTER_NAME=$(_var sno_cluster_name)
 BASE_DOMAIN=$(_var sno_base_domain)
-SNO_PREFIX=$(_var sno_prefix)
 BASTION_USER=$(_var sno_bastion_user)
 BASTION_PASSWORD=$(_var sno_bastion_password)
+
+# sno_base_dir is quoted and contains a Jinja lookup, so it needs its own parsing.
+BASE_DIR=$(grep "^sno_base_dir:" "$VARS_FILE" | cut -d'"' -f2 | sed "s|{{ lookup('env', 'HOME') }}|${HOME}|")
+TF_DIR="${BASE_DIR}/work"
 
 PASS=0
 FAIL=0
@@ -30,13 +33,15 @@ echo ""
 
 # --- Bastion IP ---
 echo "[ Bastion ]"
-BASTION_IP=$(virsh -c qemu:///system domifaddr "${SNO_PREFIX}_bastion0" 2>/dev/null \
-    | grep -oP 'ipv4\s+\K[\d.]+(?=/)') || true
-if [[ -z "$BASTION_IP" ]]; then
-    fail "Bastion VM '${SNO_PREFIX}_bastion0' not found — run 01-infra-bastion.yml first"
+# Same source as the playbooks: the bastion_ip output from 01-infra-bastion.yml.
+# `terraform output -raw` prints a warning to stdout and still exits 0 when the
+# output is absent, so validate the shape instead of trusting the exit code.
+BASTION_IP=$(terraform -chdir="$TF_DIR" output -raw bastion_ip 2>/dev/null) || true
+if [[ ! "$BASTION_IP" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+    fail "No bastion_ip output in $TF_DIR — run 01-infra-bastion.yml first"
     exit 1
 fi
-ok "Bastion reachable at $BASTION_IP"
+ok "Bastion IP from Terraform output: $BASTION_IP"
 
 # Run oc as the bastion user (kubeconfig lives at ~/.kube/config for that user).
 # -i gives a login shell so /usr/local/bin (oc, openshift-install) is on PATH.
@@ -120,8 +125,7 @@ echo "  ${HOST_IP}  oauth-openshift.apps.${CLUSTER_NAME}.${BASE_DOMAIN}"
 echo "  ${HOST_IP}  api.${CLUSTER_NAME}.${BASE_DOMAIN}"
 
 # --- kubeadmin password ---
-BASE_DIR=$(grep "^sno_base_dir:" "$VARS_FILE" | cut -d'"' -f2 | sed "s|{{ lookup('env', 'HOME') }}|${HOME}|")
-KUBEADMIN_FILE="${BASE_DIR}/work/generated/${CLUSTER_NAME}/auth/kubeadmin-password"
+KUBEADMIN_FILE="${TF_DIR}/generated/${CLUSTER_NAME}/auth/kubeadmin-password"
 echo ""
 echo "[ kubeadmin password ]"
 if [[ -f "$KUBEADMIN_FILE" ]]; then
