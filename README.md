@@ -83,6 +83,17 @@ sudo apt-get update
 sudo apt-get install -y ansible-core terraform sshpass
 ```
 
+> The playbooks pin the `dmacvicar/libvirt` provider to **0.8.3**, which `terraform init` fetches automatically. The pin is deliberate: 0.9.x is a plugin-framework rewrite with an incompatible resource schema, so it is not a drop-in upgrade.
+>
+> Migrating a lab that was previously built with OpenTofu? Its state records the provider under `registry.opentofu.org`, which `terraform init` refuses to install. Either rebuild it (`99-destroy-all.yml`) or rewrite the address:
+>
+> ```bash
+> cd ~/sno-lab/work
+> terraform state replace-provider \
+>   registry.opentofu.org/dmacvicar/libvirt registry.terraform.io/dmacvicar/libvirt
+> rm -rf .terraform .terraform.lock.hcl && terraform init
+> ```
+
 ### libvirt daemons
 
 ```bash
@@ -100,11 +111,25 @@ done
 Edit `vars.yml` to set the cluster name, IPs, MAC addresses, OCP version, etc.  
 Review all items marked with `[CHANGE]`.
 
+The bastion's **management IP is not configurable** — it comes from the libvirt DHCP lease on `default_network`. The playbooks read it back from the `bastion_ip` Terraform output, so there is nothing to keep in sync. The management subnet and bridge themselves are `sno_mgmt_network` / `sno_mgmt_bridge`.
+
+`sno_bastion_password` is stored in plaintext by default. For anything beyond a throwaway lab, encrypt it:
+
+```bash
+ansible-vault encrypt_string 'yourpassword' --name sno_bastion_password
+```
+
+Ansible behaviour (YAML output, task timing, SSH pipelining) is set in `ansible.cfg` at the repo root.
+
 ## Usage
 
 ```bash
 git clone https://github.com/nogunix/sno-auto-builder.git
 cd sno-auto-builder
+
+# Install the collection dependency (also used by the profile_tasks
+# callback configured in ansible.cfg)
+ansible-galaxy collection install -r requirements.yml
 
 # Step 1: provision bastion VM + generate Agent ISO on localhost (~5 min)
 ansible-playbook 01-infra-bastion.yml
@@ -165,11 +190,7 @@ cd ~/sno-lab/work/generated/ocp4
 
 Run the following playbook to expose the console to your home network via an nginx stream proxy on the host.
 
-This playbook requires the `ansible.posix` collection. Install it first:
-
-```bash
-ansible-galaxy collection install -r requirements.yml
-```
+> **RedHat-family hosts only.** This playbook uses `dnf`, `semanage`, SELinux booleans, `firewalld`, and the `/etc/nginx/stream.d` layout, so it runs on Fedora / RHEL / CentOS Stream. It asserts this up front and stops with a clear message elsewhere. On other distributions, proxy ports 80/443/6443 to the ingress and API VIPs by hand. Playbooks `01`, `02` and `99` are unaffected.
 
 ```bash
 ansible-playbook 03-expose-console.yml
@@ -220,7 +241,7 @@ bash test/test-console.sh
 ```
 
 This checks:
-- Bastion VM reachability
+- Bastion IP resolves from the `bastion_ip` Terraform output
 - `oc` and `openshift-install` binaries on the bastion
 - Node status (`Ready`)
 - Cluster version and all cluster operators (`Available`)
@@ -304,14 +325,16 @@ Host (localhost)
 
 ```
 Host (Fedora / RHEL / CentOS Stream / Ubuntu + libvirt)
-  ├─ bastion VM (CentOS Stream)   192.168.222.10 / 192.168.10.2
+  ├─ bastion VM (CentOS Stream)   <DHCP> / 192.168.10.2
   │    dnsmasq · squid · HAProxy · NFS · chrony · oc · openshift-install
   └─ SNO master VM (RHCOS)        192.168.10.10
        control-plane · etcd · ingress · kubelet … all on one node
 
 Networks
-  default_network   192.168.222.0/24  NAT  host ↔ bastion (management)
-  sno01_network     192.168.10.0/24   NAT  bastion ↔ master (cluster L2)
+  default_network   192.168.222.0/24  NAT  host ↔ bastion (management, DHCP)
+  sno01_network     192.168.10.0/24   NAT  bastion ↔ master (cluster L2, static)
+
+VIPs on the bastion cluster NIC: 192.168.10.100 (API) · 192.168.10.101 (ingress)
 ```
 
 ## License
