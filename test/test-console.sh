@@ -103,10 +103,16 @@ fi
 echo ""
 echo "[ nginx (03-expose-console.yml) ]"
 CONSOLE_URL="https://console-openshift-console.apps.${CLUSTER_NAME}.${BASE_DOMAIN}"
+HOST_IP=$(hostname -I | awk '{print $1}')
 if systemctl is-active --quiet nginx 2>/dev/null; then
     ok "nginx is active"
 
-    HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 10 "$CONSOLE_URL") || true
+    # The apps wildcard is not in DNS on the host — the /etc/hosts lines printed
+    # below are only a hint for client machines. Point curl at the nginx stream
+    # proxy explicitly so the check tests the proxy, not the host's resolver.
+    HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 10 \
+        --resolve "console-openshift-console.apps.${CLUSTER_NAME}.${BASE_DOMAIN}:443:${HOST_IP}" \
+        "$CONSOLE_URL") || true
     if [[ "$HTTP_CODE" == "200" || "$HTTP_CODE" == "302" || "$HTTP_CODE" == "301" ]]; then
         ok "Console reachable (HTTP $HTTP_CODE): $CONSOLE_URL"
     else
@@ -119,7 +125,6 @@ fi
 # --- /etc/hosts hint ---
 echo ""
 echo "[ /etc/hosts entries for client machines ]"
-HOST_IP=$(hostname -I | awk '{print $1}')
 echo "  ${HOST_IP}  console-openshift-console.apps.${CLUSTER_NAME}.${BASE_DOMAIN}"
 echo "  ${HOST_IP}  oauth-openshift.apps.${CLUSTER_NAME}.${BASE_DOMAIN}"
 echo "  ${HOST_IP}  api.${CLUSTER_NAME}.${BASE_DOMAIN}"
