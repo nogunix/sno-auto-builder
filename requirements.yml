@@ -1,3 +1,5 @@
 ---
 collections:
+  # seboolean / firewalld modules and the profile_tasks callback
   - name: ansible.posix
+    version: ">=1.5.4"

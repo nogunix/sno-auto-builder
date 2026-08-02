@@ -50,13 +50,16 @@ jobs:
           done
 
   validate-templates:
-    name: Template render + tofu validate
+    name: Template render + terraform validate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up OpenTofu
-        uses: opentofu/setup-opentofu@v2
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          # Emit raw CLI output rather than the action's stdout wrapper.
+          terraform_wrapper: false
 
       - name: Install ansible-core
         run: pip install ansible-core
@@ -73,8 +76,11 @@ jobs:
       - name: Render templates
         run: ansible-playbook test-render.yml
 
-      - name: tofu init
-        run: tofu -chdir=/tmp/sno-rendered init
+      - name: terraform init
+        run: terraform -chdir=/tmp/sno-rendered init -backend=false
 
-      - name: tofu validate
-        run: tofu -chdir=/tmp/sno-rendered validate
+      - name: terraform validate
+        run: terraform -chdir=/tmp/sno-rendered validate
+
+      - name: terraform fmt
+        run: terraform -chdir=/tmp/sno-rendered fmt -check -diff

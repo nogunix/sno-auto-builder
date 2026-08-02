@@ -76,7 +76,7 @@ resource "libvirt_domain" "{{ sno_prefix }}_bastion0" {
 
   disk {
     volume_id = libvirt_volume.{{ sno_prefix }}_bastion0.id
-    scsi      = "true"
+    scsi      = true
   }
 
   cloudinit = libvirt_cloudinit_disk.{{ sno_prefix }}_bastion0_cloudinit.id
@@ -90,6 +90,16 @@ resource "libvirt_domain" "{{ sno_prefix }}_bastion0" {
   graphics {
     type        = "vnc"
     listen_type = "address"
-    autoport    = "true"
+    autoport    = true
   }
 }
+
+# Management IP of the bastion, learned from the libvirt DHCP lease.
+# `wait_for_lease = true` on the management NIC guarantees this is populated by
+# the time apply finishes, so the playbooks read it from here instead of
+# scraping `virsh domifaddr`.
+output "bastion_ip" {
+  description = "DHCP-assigned management IP of the bastion on default_network"
+  value       = try(libvirt_domain.{{ sno_prefix }}_bastion0.network_interface[0].addresses[0], "")
+}
+

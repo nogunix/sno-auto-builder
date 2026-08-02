@@ -40,7 +40,7 @@ Designed to run on a mini PC with **32 GB RAM**:
 ## Prerequisites
 
 - Fedora / RHEL 9+ / CentOS Stream 9+ / Ubuntu 22.04+ + libvirt/KVM
-- `ansible-core` / `opentofu` / `sshpass`
+- `ansible-core` / `terraform` / `sshpass`
 - OpenShift pull secret at `~/openshift-pull-secret/openshift-pull-secret.txt`
 
   A Red Hat Developer account is required (free): https://developers.redhat.com/register  
@@ -52,7 +52,10 @@ Designed to run on a mini PC with **32 GB RAM**:
 ### Fedora
 
 ```bash
-sudo dnf install -y ansible-core opentofu sshpass
+# Terraform is not in the Fedora repos — add HashiCorp's
+sudo curl -Lo /etc/yum.repos.d/hashicorp.repo \
+  https://rpm.releases.hashicorp.com/fedora/hashicorp.repo
+sudo dnf install -y ansible-core terraform sshpass
 ```
 
 ### RHEL 9+ / CentOS Stream 9+
@@ -61,18 +64,23 @@ sudo dnf install -y ansible-core opentofu sshpass
 # RHEL only: enable EPEL (provides sshpass)
 sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
 
-# Add OpenTofu repo and install packages
-sudo curl -Lo /etc/yum.repos.d/opentofu.repo \
-  https://packages.opentofu.org/opentofu/tofu/config_file.repo?type=rpm
-sudo dnf install -y ansible-core opentofu sshpass
+# Add HashiCorp repo and install packages
+sudo curl -Lo /etc/yum.repos.d/hashicorp.repo \
+  https://rpm.releases.hashicorp.com/RHEL/hashicorp.repo
+sudo dnf install -y ansible-core terraform sshpass
 ```
 
 ### Ubuntu 22.04+
 
 ```bash
-# Add OpenTofu repo and install packages
-curl -fsSL https://get.opentofu.org/install-opentofu.sh | sudo sh -s -- --install-method deb
-sudo apt-get install -y ansible-core sshpass
+# Add HashiCorp repo and install packages
+wget -qO- https://apt.releases.hashicorp.com/gpg \
+  | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] \
+https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
+  | sudo tee /etc/apt/sources.list.d/hashicorp.list
+sudo apt-get update
+sudo apt-get install -y ansible-core terraform sshpass
 ```
 
 ### libvirt daemons

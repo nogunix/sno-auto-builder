@@ -11,30 +11,32 @@
         path: "{{ sno_tf_dir }}/{{ sno_cluster_os_image_name }}"
       register: iso_stat
 
-    - name: Fail if agent ISO is missing
-      ansible.builtin.fail:
-        msg: "Agent ISO not found: {{ sno_tf_dir }}/{{ sno_cluster_os_image_name }} — run 01-infra-bastion.yml first"
-      when: not iso_stat.stat.exists
-
     - name: Verify openshift-install binary exists
       ansible.builtin.stat:
         path: "{{ sno_installer_path }}"
       register: installer_stat
 
-    - name: Fail if openshift-install is missing
-      ansible.builtin.fail:
-        msg: "openshift-install not found: {{ sno_installer_path }} — run 01-infra-bastion.yml first"
-      when: not installer_stat.stat.exists
+    - name: Assert 01-infra-bastion.yml has already run
+      ansible.builtin.assert:
+        that:
+          - iso_stat.stat.exists
+          - installer_stat.stat.exists
+        fail_msg: >-
+          Missing prerequisites from 01-infra-bastion.yml —
+          agent ISO ({{ sno_tf_dir }}/{{ sno_cluster_os_image_name }}):
+          {{ 'ok' if iso_stat.stat.exists else 'MISSING' }},
+          openshift-install ({{ sno_installer_path }}):
+          {{ 'ok' if installer_stat.stat.exists else 'MISSING' }}
 
-    - name: Generate master OpenTofu manifest
+    - name: Generate master Terraform manifest
       ansible.builtin.template:
         src: templates/master.tf.j2
         dest: "{{ sno_tf_dir }}/{{ sno_prefix }}_cluster_master0.tf"
         mode: '0644'
 
-    - name: Remove SNO master domain from tofu state if present (stale from prior run)
+    - name: Remove SNO master domain from terraform state if present (stale from prior run)
       ansible.builtin.command:
-        cmd: tofu state rm libvirt_domain.{{ sno_prefix }}_master0
+        cmd: terraform state rm libvirt_domain.{{ sno_prefix }}_master0
         chdir: "{{ sno_tf_dir }}"
       failed_when: false
       changed_when: false
@@ -45,9 +47,9 @@
       failed_when: false
       changed_when: false
 
-    - name: OpenTofu apply (create SNO master VM)
+    - name: Terraform apply (create SNO master VM)
       ansible.builtin.command:
-        cmd: tofu apply -auto-approve
+        cmd: terraform apply -auto-approve -input=false
         chdir: "{{ sno_tf_dir }}"
       register: tf_apply
       changed_when: "'Apply complete!' in tf_apply.stdout"
@@ -73,15 +75,24 @@
       poll: 30
       changed_when: true
 
-    - name: Get bastion IP from libvirt
+    - name: Read bastion IP from the Terraform output
       ansible.builtin.command:
-        cmd: virsh -c qemu:///system domifaddr {{ sno_prefix }}_bastion0
-      register: domifaddr_out
+        cmd: terraform output -raw bastion_ip
+        chdir: "{{ sno_tf_dir }}"
+      register: tf_bastion_ip
       changed_when: false
 
     - name: Set bastion IP fact
       ansible.builtin.set_fact:
-        sno_bastion_ip: "{{ domifaddr_out.stdout | regex_search('ipv4\\s+(\\S+)', '\\1') | first | split('/') | first }}"
+        sno_bastion_ip: "{{ tf_bastion_ip.stdout | trim }}"
+
+    - name: Assert the bastion has a management IP
+      ansible.builtin.assert:
+        that:
+          - sno_bastion_ip is match('^\d{1,3}(\.\d{1,3}){3}$')
+        fail_msg: >-
+          The bastion has no management IP. Check the libvirt DHCP lease with
+          `virsh -c qemu:///system domifaddr {{ sno_prefix }}_bastion0`.
 
     - name: Add bastion to inventory for kubeconfig copy
       ansible.builtin.add_host:
@@ -90,6 +101,7 @@
         ansible_user: "{{ sno_bastion_user }}"
         ansible_password: "{{ sno_bastion_password }}"
         ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      no_log: true
 
 - name: SNO - copy kubeconfig to bastion
   hosts: bastion_server

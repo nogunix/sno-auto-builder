@@ -1,7 +1,11 @@
 terraform {
+  required_version = ">= 1.6"
+
   required_providers {
     libvirt = {
-      source  = "dmacvicar/libvirt"
+      source = "dmacvicar/libvirt"
+      # Pinned exactly: 0.9.x is a plugin-framework rewrite with an incompatible
+      # schema (devices/os nested blocks), so it is not a drop-in upgrade.
       version = "0.8.3"
     }
   }
@@ -23,8 +27,8 @@ resource "libvirt_network" "default_network" {
   name      = "default_network"
   autostart = true
   mode      = "nat"
-  addresses = ["192.168.222.0/24"]
-  bridge    = "defbr0"
+  addresses = ["{{ sno_mgmt_network }}"]
+  bridge    = "{{ sno_mgmt_bridge }}"
   dhcp {
     enabled = true
   }
