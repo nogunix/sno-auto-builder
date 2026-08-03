@@ -41,7 +41,7 @@ CI uses `ansible-lint` (GitHub Actions, `ansible/ansible-lint@v25`). The repo pa
 ansible-lint --profile production
 ```
 
-There is no unit test suite. The other checks are `shellcheck` on `test/test-console.sh` (not in CI) and `test/test-console.sh` itself, which verifies a *live* cluster — see below.
+There is no unit test suite. The other checks are `shellcheck` on the two scripts in `test/` (not in CI), and the scripts themselves, which need a *live* lab — see below.
 
 ## Local verification before pushing
 
@@ -51,8 +51,8 @@ Reproduce the full CI suite locally before pushing (mirrors `lint.yml` + `test.y
 # 1. Lint (pip install --user ansible-lint if the command is missing)
 ansible-lint --profile production
 
-# 1b. Shell script (not in CI, but keep it clean)
-shellcheck test/test-console.sh
+# 1b. Shell scripts (not in CI, but keep them clean)
+shellcheck test/test-console.sh test/cycle-test.sh
 
 # 2. Syntax-check all playbooks
 ansible-playbook --syntax-check -i test/inventory \
@@ -74,6 +74,25 @@ cd /tmp/sno-rendered && terraform init -backend=false && terraform validate && t
 ```
 
 It reads the bastion IP from `terraform output -raw bastion_ip` (same source as the playbooks), SSHes in as the bastion user, and checks `oc`/`openshift-install`, node readiness, clusterversion, all ClusterOperators, nginx, and console HTTP reachability. It also prints the kubeadmin password, so avoid pasting its raw output into anything shared.
+
+The console check passes `curl --resolve …:443:<host IP>` deliberately: the `apps.*` wildcard is **not** resolvable on the host — the `/etc/hosts` lines the script prints at the end are a hint for client machines, and nothing in the repo adds them. Without `--resolve` the check returns HTTP 000 against a perfectly healthy cluster. Keep it if you touch that check.
+
+## Full lifecycle cycle test
+
+`test/cycle-test.sh` runs the whole lab lifecycle unattended — `01` → `02` → `03` → `test/test-console.sh` → `99` — and is the way to exercise create *and* teardown in one go.
+
+```bash
+./test/cycle-test.sh                  # one cycle
+./test/cycle-test.sh -n 3             # three back-to-back cycles
+./test/cycle-test.sh --no-console     # skip 03 and the console check
+./test/cycle-test.sh --preflight-only # environment checks only, creates nothing
+./test/cycle-test.sh --keep           # create + verify, skip 99
+```
+
+- Per-phase logs and a duration summary land in `~/sno-cycle-logs/<timestamp>/` (mode `0700` — the verify log contains the kubeadmin password). The log directory deliberately lives **outside** `sno_base_dir`, which `99` deletes.
+- **Destroy guard:** `infra.tf.j2` names its libvirt pool literally `default` and `99-destroy-all.yml` undefines it by name, so an unattended teardown on a host with a stock `default` pool would destroy someone else's storage. The script runs the destroy phase only when `virsh pool-dumpxml default` points at `sno_pool_dir`, and checks the same in preflight. Do not remove that guard.
+- On failure the lab is **left running** for post-mortem and the loop stops; `--destroy-on-fail` overrides.
+- Reference timing on a 60 GB / 8-core host: ~40 min total (01 ≈ 5½ min, 02 ≈ 35 min, 03 and 99 seconds each). The 60–120 min in this file and the README is the upstream install figure; well past ~50 min in `02` means something is wrong. Memory is the binding constraint — the lab needs 24 GB (20 master + 4 bastion).
 
 ## Architecture
 

@@ -50,8 +50,8 @@ SSH="sshpass -p $BASTION_PASSWORD ssh -o StrictHostKeyChecking=no -o UserKnownHo
 # --- oc / openshift-install binaries ---
 echo ""
 echo "[ Bastion binaries ]"
-$SSH which oc              &>/dev/null && ok "oc found" || fail "oc not found on bastion"
-$SSH which openshift-install &>/dev/null && ok "openshift-install found" || fail "openshift-install not found on bastion"
+if $SSH which oc &>/dev/null; then ok "oc found"; else fail "oc not found on bastion"; fi
+if $SSH which openshift-install &>/dev/null; then ok "openshift-install found"; else fail "openshift-install not found on bastion"; fi
 
 # --- Cluster nodes ---
 echo ""
