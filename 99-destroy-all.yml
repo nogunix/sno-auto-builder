@@ -46,6 +46,24 @@
         state: absent
       become: true
 
+    # Both halves of the /etc/hosts state: the marker block written by
+    # 03-expose-console.yml and the single api/api-int line written by
+    # 02-create-sno-cluster.yml. Without these the host keeps resolving a
+    # cluster that no longer exists.
+    - name: Remove SNO console entries from /etc/hosts
+      ansible.builtin.blockinfile:
+        path: /etc/hosts
+        marker: "# {mark} SNO console proxy ({{ sno_cluster_name }}.{{ sno_base_domain }})"
+        state: absent
+      become: true
+
+    - name: Remove SNO API entry from /etc/hosts
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        line: "{{ sno_api_vip }} api.{{ sno_cluster_name }}.{{ sno_base_domain }} api-int.{{ sno_cluster_name }}.{{ sno_base_domain }}"
+        state: absent
+      become: true
+
     - name: Remove nginx SNO stream config
       ansible.builtin.file:
         path: /etc/nginx/stream.d/sno.conf
