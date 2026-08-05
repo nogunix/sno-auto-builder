@@ -4,6 +4,9 @@
   gather_facts: true
   vars_files:
     - vars.yml
+  vars:
+    # The LAN-facing address of this host — where nginx accepts 80/443/6443.
+    sno_host_ip: "{{ ansible_facts['default_ipv4']['address'] }}"
 
   tasks:
     # dnf, semanage, seboolean, firewalld and the /etc/nginx/stream.d layout below
@@ -88,21 +91,40 @@
         state: started
       become: true
 
-    - name: Write /etc/hosts entries to file
+    # Managed as a marker block so 99-destroy-all.yml can remove it cleanly.
+    # Only the apps.* names go here: 02-create-sno-cluster.yml already points
+    # api/api-int straight at sno_api_vip, which the host reaches directly over
+    # the libvirt NAT network. Adding a second api entry here would shadow it.
+    - name: Manage /etc/hosts entries for the console on this host
+      ansible.builtin.blockinfile:
+        path: /etc/hosts
+        marker: "# {mark} SNO console proxy ({{ sno_cluster_name }}.{{ sno_base_domain }})"
+        block: |
+          {{ sno_host_ip }} console-openshift-console.apps.{{ sno_cluster_name }}.{{ sno_base_domain }}
+          {{ sno_host_ip }} oauth-openshift.apps.{{ sno_cluster_name }}.{{ sno_base_domain }}
+          {{ sno_host_ip }} downloads-openshift-console.apps.{{ sno_cluster_name }}.{{ sno_base_domain }}
+        state: present
+      become: true
+
+    # Other devices on the LAN cannot reach sno_api_vip, so their api entry has
+    # to go through the nginx stream proxy on this host as well.
+    - name: Write /etc/hosts entries for other devices on the LAN
       ansible.builtin.copy:
         dest: "{{ sno_base_dir }}/hosts-entries.txt"
         content: |
-          {{ ansible_facts['default_ipv4']['address'] }}  console-openshift-console.apps.{{ sno_cluster_name }}.{{ sno_base_domain }}
-          {{ ansible_facts['default_ipv4']['address'] }}  oauth-openshift.apps.{{ sno_cluster_name }}.{{ sno_base_domain }}
-          {{ ansible_facts['default_ipv4']['address'] }}  api.{{ sno_cluster_name }}.{{ sno_base_domain }}
+          {{ sno_host_ip }} console-openshift-console.apps.{{ sno_cluster_name }}.{{ sno_base_domain }}
+          {{ sno_host_ip }} oauth-openshift.apps.{{ sno_cluster_name }}.{{ sno_base_domain }}
+          {{ sno_host_ip }} downloads-openshift-console.apps.{{ sno_cluster_name }}.{{ sno_base_domain }}
+          {{ sno_host_ip }} api.{{ sno_cluster_name }}.{{ sno_base_domain }}
         mode: '0644'
 
-    - name: Show instructions for home devices
+    - name: Show what was configured
       ansible.builtin.debug:
         msg: >-
-          /etc/hosts entries saved to {{ sno_base_dir }}/hosts-entries.txt —
-          run: cat {{ sno_base_dir }}/hosts-entries.txt
-          then add the lines to /etc/hosts on each home device.
+          This host's /etc/hosts now resolves the console to {{ sno_host_ip }}
+          (removed again by 99-destroy-all.yml). For other devices on the LAN,
+          copy the lines in {{ sno_base_dir }}/hosts-entries.txt into their own
+          /etc/hosts.
 
   handlers:
     - name: Reload nginx

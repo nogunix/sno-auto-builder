@@ -107,9 +107,19 @@ HOST_IP=$(hostname -I | awk '{print $1}')
 if systemctl is-active --quiet nginx 2>/dev/null; then
     ok "nginx is active"
 
-    # The apps wildcard is not in DNS on the host — the /etc/hosts lines printed
-    # below are only a hint for client machines. Point curl at the nginx stream
-    # proxy explicitly so the check tests the proxy, not the host's resolver.
+    # 03-expose-console.yml manages a marker block in /etc/hosts for this host.
+    CONSOLE_FQDN="console-openshift-console.apps.${CLUSTER_NAME}.${BASE_DOMAIN}"
+    RESOLVED=$(getent hosts "$CONSOLE_FQDN" | awk '{print $1}' | head -1)
+    if [[ "$RESOLVED" == "$HOST_IP" ]]; then
+        ok "Console name resolves to $HOST_IP (/etc/hosts block)"
+    elif [[ -n "$RESOLVED" ]]; then
+        fail "Console name resolves to $RESOLVED, expected $HOST_IP"
+    else
+        fail "Console name does not resolve — the /etc/hosts block from 03-expose-console.yml is missing"
+    fi
+
+    # Still pass --resolve: this check is about the proxy path, and it must give
+    # the same answer whether or not the resolver happens to be set up.
     HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 10 \
         --resolve "console-openshift-console.apps.${CLUSTER_NAME}.${BASE_DOMAIN}:443:${HOST_IP}" \
         "$CONSOLE_URL") || true
@@ -124,7 +134,7 @@ fi
 
 # --- /etc/hosts hint ---
 echo ""
-echo "[ /etc/hosts entries for client machines ]"
+echo "[ /etc/hosts entries for OTHER devices on the LAN (this host is managed automatically) ]"
 echo "  ${HOST_IP}  console-openshift-console.apps.${CLUSTER_NAME}.${BASE_DOMAIN}"
 echo "  ${HOST_IP}  oauth-openshift.apps.${CLUSTER_NAME}.${BASE_DOMAIN}"
 echo "  ${HOST_IP}  api.${CLUSTER_NAME}.${BASE_DOMAIN}"
