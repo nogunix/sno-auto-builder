@@ -64,3 +64,27 @@ sno_ingress_vip: "192.168.10.101"
 # Paths used for ISO generation on localhost and cluster monitoring (set by 01-infra-bastion.yml)
 sno_installer_path: "{{ sno_tf_dir }}/openshift-install"
 sno_manifests_dir: "{{ sno_tf_dir }}/generated/{{ sno_cluster_name }}"
+
+# openshift-mcp-server — used by 04-deploy-mcp-server.yml
+# The pod runs on this host with hostNetwork, so sno_mcp_port is a host port and
+# must be free. 8080 is a common collision; 8082 is the default here for that
+# reason.
+sno_mcp_port: 8082
+sno_mcp_dir: "{{ sno_base_dir }}/mcp"
+sno_mcp_source_kubeconfig: "{{ sno_manifests_dir }}/auth/kubeconfig"
+sno_mcp_image: "quay.io/redhat-user-workloads/crt-nshift-lightspeed-tenant/openshift-mcp-server:latest"
+# ServiceAccount that supplies the bearer token for Thanos Querier and
+# Alertmanager. It gets read-only monitoring roles and nothing else.
+sno_mcp_sa_name: "mcp-metrics"
+sno_mcp_namespace: "openshift-monitoring"
+# "observability" no longer exists in the image — the server exits with
+# "invalid toolset name: observability". Use "metrics" instead.
+sno_mcp_toolsets:
+  - core
+  - config
+  - openshift
+  - metrics
+# Skip TLS verification towards the monitoring routes. Leave false: a cluster
+# built by this repo has the ingress CA in its kubeconfig CA bundle. Set true
+# only if you hit "x509: certificate signed by unknown authority".
+sno_mcp_insecure_tls: false
