@@ -21,9 +21,17 @@ ansible-playbook 02-create-sno-cluster.yml
 # Optional: expose the OCP web console via nginx stream proxy on the host
 ansible-playbook 03-expose-console.yml
 
+# Optional: run openshift-mcp-server on the host, pointed at the cluster
+ansible-playbook 04-deploy-mcp-server.yml
+
 # Tear everything down
 ansible-playbook 99-destroy-all.yml
 ```
+
+`04-deploy-mcp-server.yml` is tagged so its stages can run on their own:
+`rbac` (ServiceAccount + bindings), `kubeconfig` (token → kubeconfig →
+`secret.yaml`), `hosts` (the `/etc/hosts` block), `deploy` (render + `podman
+kube play` + verify), and `verify` alone to re-check a live deployment.
 
 ## Ansible configuration
 
@@ -103,7 +111,8 @@ The console check passes `curl --resolve …:443:<host IP>` deliberately, even t
 | `01-infra-bastion.yml` | localhost → bastion → localhost | Renders Terraform templates, calls `terraform apply` to create pool/networks/bastion VM, SSHes into bastion to install helper services (dnsmasq, squid, HAProxy, NFS, chrony), then generates the Agent ISO on **localhost** via `openshift-install agent create image` (built in `sno_manifests_dir`, then copied to `sno_tf_dir`) |
 | `02-create-sno-cluster.yml` | localhost | Renders `master.tf.j2`, calls `terraform apply` to create the SNO master VM which boots from the Agent ISO |
 | `03-expose-console.yml` | localhost | Installs nginx on the host, configures SSL stream passthrough to the SNO ingress VIP, opens ports 80/443/6443 in firewalld, adds the console `/etc/hosts` block on this host and writes `hosts-entries.txt` for other LAN devices |
-| `99-destroy-all.yml` | localhost | `terraform destroy`, manual `virsh undefine` fallbacks, removes `sno_base_dir`, cleans up nginx config and both `/etc/hosts` entries |
+| `04-deploy-mcp-server.yml` | localhost | Creates a read-only `mcp-metrics` ServiceAccount plus a long-lived token on the cluster, injects that token into a copy of the cluster kubeconfig, renders the pod manifest, adds the monitoring-route `/etc/hosts` block, and runs `openshift-mcp-server` under podman on the host |
+| `99-destroy-all.yml` | localhost | Removes the MCP pod/secret, `terraform destroy`, manual `virsh undefine` fallbacks, removes `sno_base_dir`, cleans up nginx config and all three `/etc/hosts` entries |
 
 ### Template rendering flow
 
@@ -117,6 +126,7 @@ All files in `templates/` are Jinja2 templates, rendered at runtime by the playb
 - `agent-config.yaml.j2` → rendered on localhost into `sno_manifests_dir`; `openshift-install agent create image` then generates the ISO
 - `nginx.conf.j2` → `/etc/nginx/nginx.conf` — stream-only nginx config (rendered by `03`)
 - `nginx-sno-stream.conf.j2` → `/etc/nginx/stream.d/sno.conf` — TCP stream proxy for ports 80/443/6443 (rendered by `03`)
+- `openshift-mcp-server-pod.yaml.j2` → `sno_mcp_dir/openshift-mcp-server-pod.yaml` — podman kube manifest, two documents (ConfigMap holding the server's `config.toml`, then the Pod) (rendered by `04`)
 
 ### Network topology
 
@@ -134,7 +144,11 @@ Host (libvirt)
 - **Bastion IP comes from a Terraform output, not `virsh`**: the bastion's management NIC is DHCP, and `bastion.tf.j2` exposes the lease as the `bastion_ip` output (`wait_for_lease = true` guarantees it is populated at apply time). `01`, `02` and `test/test-console.sh` all read it with `terraform output -raw bastion_ip`. There is **no** `sno_bastion_ip` variable in `vars.yml` — it is a runtime fact only.
   - **Gotcha:** when the output is missing (e.g. state predating this change), `terraform output -raw` writes a *warning to stdout* and still **exits 0**. An emptiness or exit-code check would treat that warning text as an IP, so every caller validates the IPv4 shape instead. Keep that validation if you touch these call sites.
 - **`/etc/hosts` is written by two playbooks, pointing at two different IPs — deliberately.** `02-create-sno-cluster.yml` adds one plain line for `api`/`api-int` → `sno_api_vip`, because the host reaches the VIP directly over the libvirt NAT network and `openshift-install wait-for` needs it during the install. `03-expose-console.yml` adds a marker block for the `apps.*` names → the *host's* LAN IP, which goes through the nginx stream proxy. Do **not** add `api` to the 03 block: two entries for the same name would shadow each other. Devices other than the host cannot reach the VIP at all, so `hosts-entries.txt` lists `api` → host IP for them. `99-destroy-all.yml` removes both, and the marker/line there must stay byte-identical to what 02 and 03 write or teardown silently leaks a stale entry.
-- **Secrets are marked `no_log`**: the tasks that render `login_bastion.sh` (mode `0700`, it embeds the password) and that `add_host` the bastion with `ansible_password` both set `no_log: true`. Do not remove it to make debugging easier.
+- **Secrets are marked `no_log`**: the tasks that render `login_bastion.sh` (mode `0700`, it embeds the password) and that `add_host` the bastion with `ansible_password` both set `no_log: true`. Do not remove it to make debugging easier. In `04-deploy-mcp-server.yml` the same applies to every task that touches the ServiceAccount token or the kubeconfig body.
+- **`04`'s `/etc/hosts` block is what makes the metrics tools work, not the pod's `hostAliases`.** Under `hostNetwork: true`, `podman kube play` silently ignores `hostAliases` and seeds the container's `/etc/hosts` from the *host's* file. The manifest keeps its `hostAliases` as documentation and as a fallback if `hostNetwork` is ever dropped, but the host block is load-bearing — without it the tools fail with `dial tcp: lookup ...: no such host`. Its names point straight at `sno_ingress_vip`, unlike `03`'s console block which goes via the host's LAN IP: the MCP server runs on this host and reaches the VIP directly, so the nginx hairpin would be pointless. The two name sets are disjoint, so neither shadows the other.
+- **The MCP kubeconfig carries a client certificate *and* a token, deliberately.** The monitoring routes sit behind `kube-rbac-proxy`, which only accepts a bearer token — a client certificate alone gets `401`, so `auth_mode = "kubeconfig"` needs a token in the file. Both credentials coexist: the Kubernetes API authenticates the certificate first and keeps admin access, and only the routes use the token. `cluster-monitoring-view` covers Thanos Querier; Alertmanager additionally needs the namespaced `monitoring-alertmanager-view` or it answers `403`. The bindings are named after the ServiceAccount rather than the ClusterRole, because `oc adm policy add-cluster-role-to-user` would reuse a generic shared binding that teardown could not remove safely.
+- **`04`'s verification requests pass `ca_path`, not the system trust store.** The server validates the route certificate against the kubeconfig CA bundle, which carries the ingress CA; this host's system store does not. A plain `validate_certs: true` check therefore fails on a perfectly good deployment, so the playbook writes the bundle to `sno_mcp_dir/cluster-ca.crt` and points `uri` at it.
+- **`04` only redeploys when something changed**: redeploying restarts the server, so the pod/secret teardown and `podman kube play` are gated on the rendered manifest or `secret.yaml` having changed, or the pod not being `Running`. Keep that guard — without it every re-run bounces a healthy pod.
 - **Provider is pinned to `dmacvicar/libvirt` 0.8.3 deliberately**: 0.9.x is a plugin-framework rewrite with an incompatible schema (`devices = { disks = [...] }`, `os = { boot_devices = [...] }` replace `disk`/`network_interface`/`cloudinit`/`boot_device`). Do not "upgrade" the pin without rewriting all three `.tf` templates.
 - **`03-expose-console.yml` is RedHat-family only** and asserts so up front: it uses `dnf`, `semanage`, `seboolean`, `firewalld`, and the `/etc/nginx/stream.d` layout. The other playbooks are portable. CI syntax-checks Ubuntu, but syntax-check does not execute these tasks.
 - **Idempotency guard on bastion setup**: `helper_node.sh` writes `/etc/helper_node_setup_info` on completion; `01-infra-bastion.yml` skips the block if that file exists.
