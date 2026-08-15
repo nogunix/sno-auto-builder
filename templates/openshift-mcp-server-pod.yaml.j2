@@ -1,0 +1,120 @@
+---
+# Rendered by 04-deploy-mcp-server.yml. Edit the template, not the output.
+#
+# openshift-mcp-server runtime configuration.
+#
+# The metrics toolset is configured here rather than on the command line: the
+# server exposes no CLI flags for prometheus_url / alertmanager_url, so without
+# a --config file its tools fail with "alertmanager_url not configured". The
+# remaining server settings live here too, to keep one source of truth.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openshift-mcp-config
+data:
+  config.toml: |
+    port = "{{ sno_mcp_port }}"
+    kubeconfig = "/kubeconfig/config"
+    read_only = true
+    log_level = 2
+
+    # "observability" was removed from the image; "metrics" is its successor
+    # (Thanos Querier / Alertmanager). Full list: config, core, helm, kcp,
+    # kubevirt, metrics, netedge, openshift, ossm, tekton, traces.
+    toolsets = [{{ sno_mcp_toolsets | map('to_json') | join(', ') }}]
+
+    [toolset_configs.metrics]
+    # In-cluster Service DNS (thanos-querier.openshift-monitoring.svc:9091) is
+    # what the operator-managed deployment uses, but this pod runs outside the
+    # cluster on the host network, so the public routes are used instead. The
+    # names resolve through the host's /etc/hosts (see 04-deploy-mcp-server.yml).
+    prometheus_url = "https://thanos-querier-openshift-monitoring.apps.{{ sno_cluster_name }}.{{ sno_base_domain }}"
+    alertmanager_url = "https://alertmanager-main-openshift-monitoring.apps.{{ sno_cluster_name }}.{{ sno_base_domain }}"
+
+    # Where the bearer token for Thanos / Alertmanager comes from. The default,
+    # "header", takes it from the caller's Authorization header, which the MCP
+    # client does not send — hence "no bearer token found in request context".
+    # "kubeconfig" reads it from the mounted kubeconfig instead, which is why
+    # 04-deploy-mcp-server.yml adds a ServiceAccount token to that kubeconfig:
+    # the routes sit behind kube-rbac-proxy and answer 401 for a client
+    # certificate on its own.
+    auth_mode = "kubeconfig"
+
+    # Verify the route certificate against the kubeconfig CA bundle, which on a
+    # cluster built by this repo already contains the ingress CA. Set
+    # sno_mcp_insecure_tls to true if that is not the case for yours — the
+    # symptom is "x509: certificate signed by unknown authority".
+    insecure = {{ sno_mcp_insecure_tls | bool | lower }}
+
+    # Query-safety PromQL checks (not RBAC). "!tsdb" disables the TSDB-derived
+    # guardrails; OpenShift's Thanos Querier does not serve /api/v1/status/tsdb,
+    # and leaving them on fails every query. Other guardrails stay on.
+    guardrails = "!tsdb"
+
+---
+# OpenShift MCP Server Pod
+apiVersion: v1
+kind: Pod
+metadata:
+  name: openshift-mcp-server
+  labels:
+    app: openshift-mcp-server
+spec:
+  # The cluster lives on the libvirt NAT network {{ sno_machine_network }},
+  # reachable only from this host. A rootless bridge network cannot route there
+  # — connections fail with "network is unreachable" — so the pod shares the
+  # host's network namespace. Because of that the server binds the host port
+  # directly and port must name a free host port.
+  hostNetwork: true
+
+  # NOTE: podman kube play ignores hostAliases under hostNetwork — it seeds the
+  # container's /etc/hosts from the *host's* file instead. These entries are
+  # therefore documentation of what the host must resolve, and a fallback for
+  # if hostNetwork is ever dropped. 04-deploy-mcp-server.yml writes the same
+  # names into the host's /etc/hosts, which is what actually takes effect.
+  hostAliases:
+    - ip: {{ sno_api_vip }}
+      hostnames:
+        - api.{{ sno_cluster_name }}.{{ sno_base_domain }}
+        - api-int.{{ sno_cluster_name }}.{{ sno_base_domain }}
+    - ip: {{ sno_ingress_vip }}
+      hostnames:
+        - thanos-querier-openshift-monitoring.apps.{{ sno_cluster_name }}.{{ sno_base_domain }}
+        - prometheus-k8s-openshift-monitoring.apps.{{ sno_cluster_name }}.{{ sno_base_domain }}
+        - alertmanager-main-openshift-monitoring.apps.{{ sno_cluster_name }}.{{ sno_base_domain }}
+
+  containers:
+    - name: openshift-mcp-server
+      image: {{ sno_mcp_image }}
+      ports:
+        - name: http
+          containerPort: {{ sno_mcp_port }}
+          protocol: TCP
+      env:
+        - name: KUBECONFIG
+          value: /kubeconfig/config
+      command:
+        - /openshift-mcp-server
+      args:
+        # Everything else lives in the ConfigMap above. Any flag repeated here
+        # would win over the file, so keep this list to --config alone.
+        - --config
+        - /config/config.toml
+      volumeMounts:
+        - name: kubeconfig
+          mountPath: /kubeconfig
+          readOnly: true
+        - name: config
+          mountPath: /config
+          readOnly: true
+
+  volumes:
+    - name: kubeconfig
+      secret:
+        secretName: openshift-mcp-kubeconfig
+        defaultMode: 0444
+    - name: config
+      configMap:
+        name: openshift-mcp-config
+
+  restartPolicy: Always

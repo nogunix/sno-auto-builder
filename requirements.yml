@@ -3,3 +3,10 @@ collections:
   # seboolean / firewalld modules and the profile_tasks callback
   - name: ansible.posix
     version: ">=1.5.4"
+  # 04-deploy-mcp-server.yml: ServiceAccount and RBAC objects on the cluster.
+  # Also needs the python3-kubernetes library, which that playbook installs.
+  - name: kubernetes.core
+    version: ">=2.4.0"
+  # 04-deploy-mcp-server.yml and 99-destroy-all.yml: pod and secret lifecycle
+  - name: containers.podman
+    version: ">=1.10.0"
