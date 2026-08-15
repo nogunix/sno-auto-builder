@@ -292,6 +292,41 @@ Log in with:
 - **Username:** `kubeadmin`
 - **Password:** output of the command above
 
+## MCP Server
+
+Run [openshift-mcp-server](https://github.com/openshift/openshift-mcp-server) on
+the host so an AI agent can inspect the cluster over MCP:
+
+> **RedHat-family hosts only**, same as `03-expose-console.yml` — it uses `dnf`
+> and podman. It asserts this up front.
+
+```bash
+ansible-playbook 04-deploy-mcp-server.yml
+```
+
+This creates a read-only `mcp-metrics` ServiceAccount on the cluster, adds its
+token to a copy of the cluster kubeconfig, writes the `/etc/hosts` entries for
+the monitoring routes, and starts the server under podman. It finishes by
+querying Thanos Querier and Alertmanager with that token, so a successful run
+means the whole path works — not just that the container started.
+
+Register it with your client:
+
+```bash
+claude mcp add --transport http openshift-mcp-server http://localhost:8082/mcp --scope user
+```
+
+The server is read-only and exposes the `core`, `config`, `openshift` and
+`metrics` toolsets. Generated files land in `~/sno-lab/mcp/`; `secret.yaml`
+there is mode `0600` because it embeds cluster credentials.
+
+Re-running is safe: the pod is only restarted when the manifest, the kubeconfig
+secret, or the pod's running state actually changed. Individual stages can be
+run alone with `--tags rbac,kubeconfig,hosts,deploy,verify`.
+
+Adjust `sno_mcp_port`, `sno_mcp_image` and `sno_mcp_toolsets` in `vars.yml` as
+needed. Port 8082 is the default because 8080 collides so often.
+
 ## Verification
 
 After installation, verify cluster health and console reachability with the included test script:

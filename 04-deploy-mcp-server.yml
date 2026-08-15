@@ -1,0 +1,373 @@
+---
+- name: SNO - deploy openshift-mcp-server against the cluster
+  hosts: localhost
+  gather_facts: true
+  vars_files:
+    - vars.yml
+
+  tasks:
+    # podman, dnf and the /etc/hosts layout below are RedHat-family specific,
+    # same as 03-expose-console.yml. Fail with a clear message rather than a
+    # confusing "dnf not found" partway through.
+    - name: Assert the host is a RedHat-family distribution
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['os_family'] == 'RedHat'
+        fail_msg: >-
+          04-deploy-mcp-server.yml supports Fedora / RHEL / CentOS Stream only
+          (detected {{ ansible_facts['distribution'] }}
+          {{ ansible_facts['distribution_version'] }}).
+      tags:
+        - always
+
+    - name: Assert the cluster kubeconfig exists
+      ansible.builtin.stat:
+        path: "{{ sno_mcp_source_kubeconfig }}"
+      register: mcp_kubeconfig_stat
+      failed_when: not mcp_kubeconfig_stat.stat.exists
+      tags:
+        - always
+
+    # ------------------------------------------------------------------ rbac
+    # The metrics tools reach Thanos Querier and Alertmanager over their routes,
+    # which sit behind kube-rbac-proxy. That proxy only accepts a bearer token,
+    # so a dedicated ServiceAccount supplies one. Both bindings are read-only.
+    - name: Install the Kubernetes client library for kubernetes.core
+      ansible.builtin.dnf:
+        name: python3-kubernetes
+        state: present
+      become: true
+      tags:
+        - rbac
+
+    - name: Create the metrics ServiceAccount
+      kubernetes.core.k8s:
+        kubeconfig: "{{ sno_mcp_source_kubeconfig }}"
+        state: present
+        definition:
+          apiVersion: v1
+          kind: ServiceAccount
+          metadata:
+            name: "{{ sno_mcp_sa_name }}"
+            namespace: "{{ sno_mcp_namespace }}"
+      tags:
+        - rbac
+
+    # Named after the ServiceAccount rather than the ClusterRole. `oc adm policy
+    # add-cluster-role-to-user` would reuse a generic "cluster-monitoring-view"
+    # binding shared with any other grant, which teardown could not remove
+    # without taking those other subjects with it.
+    - name: Bind cluster-monitoring-view to the ServiceAccount (Thanos Querier)
+      kubernetes.core.k8s:
+        kubeconfig: "{{ sno_mcp_source_kubeconfig }}"
+        state: present
+        definition:
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: ClusterRoleBinding
+          metadata:
+            name: "{{ sno_mcp_sa_name }}-cluster-monitoring-view"
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: ClusterRole
+            name: cluster-monitoring-view
+          subjects:
+            - kind: ServiceAccount
+              name: "{{ sno_mcp_sa_name }}"
+              namespace: "{{ sno_mcp_namespace }}"
+      tags:
+        - rbac
+
+    # cluster-monitoring-view alone is not enough: Alertmanager answers 403
+    # without this namespaced role.
+    - name: Bind monitoring-alertmanager-view to the ServiceAccount
+      kubernetes.core.k8s:
+        kubeconfig: "{{ sno_mcp_source_kubeconfig }}"
+        state: present
+        definition:
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: RoleBinding
+          metadata:
+            name: "{{ sno_mcp_sa_name }}-alertmanager-view"
+            namespace: "{{ sno_mcp_namespace }}"
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: Role
+            name: monitoring-alertmanager-view
+          subjects:
+            - kind: ServiceAccount
+              name: "{{ sno_mcp_sa_name }}"
+              namespace: "{{ sno_mcp_namespace }}"
+      tags:
+        - rbac
+
+    # A kubernetes.io/service-account-token Secret rather than `oc create token`:
+    # the projected-token form expires and would silently break the metrics
+    # tools once the lifetime ran out, with no process here to refresh it.
+    - name: Create the long-lived ServiceAccount token Secret
+      kubernetes.core.k8s:
+        kubeconfig: "{{ sno_mcp_source_kubeconfig }}"
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: "{{ sno_mcp_sa_name }}-token"
+            namespace: "{{ sno_mcp_namespace }}"
+            annotations:
+              kubernetes.io/service-account.name: "{{ sno_mcp_sa_name }}"
+          type: kubernetes.io/service-account-token
+      tags:
+        - rbac
+
+    # -------------------------------------------------------------- kubeconfig
+    # The token controller populates the Secret asynchronously, so it is empty
+    # for a moment after creation.
+    - name: Wait for the token controller to populate the Secret
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ sno_mcp_source_kubeconfig }}"
+        api_version: v1
+        kind: Secret
+        name: "{{ sno_mcp_sa_name }}-token"
+        namespace: "{{ sno_mcp_namespace }}"
+      register: mcp_token_secret
+      until: mcp_token_secret.resources[0].data.token is defined
+      retries: 15
+      delay: 2
+      no_log: true
+      tags:
+        - kubeconfig
+        - deploy
+        - verify
+
+    - name: Read the cluster kubeconfig
+      ansible.builtin.slurp:
+        src: "{{ sno_mcp_source_kubeconfig }}"
+      register: mcp_source_kubeconfig_raw
+      no_log: true
+      tags:
+        - kubeconfig
+        - deploy
+        - verify
+
+    # The token goes in *alongside* the existing client certificate, not instead
+    # of it. Both can coexist: the Kubernetes API authenticates the certificate
+    # first, so the server keeps its admin access there, and only the monitoring
+    # routes use the token.
+    - name: Build the kubeconfig with the ServiceAccount token added
+      ansible.builtin.set_fact:
+        mcp_kubeconfig_body: >-
+          {{ mcp_source_kubeconfig_raw.content | b64decode | from_yaml
+             | combine({'users': mcp_users_with_token}, recursive=false)
+             | to_nice_yaml(indent=2) }}
+      vars:
+        mcp_token: "{{ mcp_token_secret.resources[0].data.token | b64decode }}"
+        mcp_source_users: "{{ (mcp_source_kubeconfig_raw.content | b64decode | from_yaml)['users'] }}"
+        mcp_users_with_token: >-
+          {{ mcp_source_users | map('combine',
+               [{'user': {'token': mcp_token}}], recursive=true) | list }}
+      no_log: true
+      tags:
+        - kubeconfig
+
+    - name: Create the MCP working directory
+      ansible.builtin.file:
+        path: "{{ sno_mcp_dir }}"
+        state: directory
+        mode: '0700'
+      tags:
+        - kubeconfig
+        - deploy
+        - verify
+
+    # The verification requests below must trust what the server trusts. The
+    # server checks the route certificate against the kubeconfig CA bundle,
+    # which carries the ingress CA; this host's system CA store does not, so
+    # a plain validate_certs check would fail on a perfectly good deployment.
+    - name: Write the cluster CA bundle for the verification requests
+      ansible.builtin.copy:
+        dest: "{{ sno_mcp_dir }}/cluster-ca.crt"
+        content: "{{ mcp_cluster_ca }}"
+        mode: '0644'
+      vars:
+        mcp_cluster_ca: >-
+          {{ (mcp_source_kubeconfig_raw.content | b64decode | from_yaml)['clusters'][0]['cluster']['certificate-authority-data'] | b64decode }}
+      when: not (sno_mcp_insecure_tls | bool)
+      tags:
+        - kubeconfig
+        - deploy
+        - verify
+
+    # 0600 and outside any git working tree: this embeds cluster-admin
+    # credentials plus the ServiceAccount token.
+    - name: Write the kubeconfig Secret manifest
+      ansible.builtin.copy:
+        dest: "{{ sno_mcp_dir }}/secret.yaml"
+        content: |
+          ---
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: openshift-mcp-kubeconfig
+          type: Opaque
+          stringData:
+            config: |
+          {{ mcp_kubeconfig_body | indent(4, true) }}
+        mode: '0600'
+      register: mcp_secret_manifest
+      no_log: true
+      tags:
+        - kubeconfig
+        - deploy
+
+    # ----------------------------------------------------------------- hosts
+    # Managed as a marker block so 99-destroy-all.yml can remove it cleanly.
+    #
+    # These point straight at sno_ingress_vip, unlike the console block in
+    # 03-expose-console.yml which points at the host's LAN IP: the MCP server
+    # runs on *this* host and reaches the VIP directly over the libvirt NAT
+    # network, so routing it back through the nginx proxy would be a pointless
+    # hairpin. The names are disjoint from the console block, so neither
+    # shadows the other.
+    #
+    # The host's file is what counts here — podman kube play ignores the pod's
+    # hostAliases under hostNetwork and copies the host's /etc/hosts instead.
+    - name: Manage /etc/hosts entries for the monitoring routes
+      ansible.builtin.blockinfile:
+        path: /etc/hosts
+        marker: "# {mark} SNO MCP monitoring routes ({{ sno_cluster_name }}.{{ sno_base_domain }})"
+        block: |
+          {{ sno_ingress_vip }} thanos-querier-openshift-monitoring.apps.{{ sno_cluster_name }}.{{ sno_base_domain }}
+          {{ sno_ingress_vip }} prometheus-k8s-openshift-monitoring.apps.{{ sno_cluster_name }}.{{ sno_base_domain }}
+          {{ sno_ingress_vip }} alertmanager-main-openshift-monitoring.apps.{{ sno_cluster_name }}.{{ sno_base_domain }}
+        state: present
+      become: true
+      tags:
+        - hosts
+
+    # ---------------------------------------------------------------- deploy
+    - name: Install podman
+      ansible.builtin.dnf:
+        name: podman
+        state: present
+      become: true
+      tags:
+        - deploy
+
+    - name: Render the pod manifest
+      ansible.builtin.template:
+        src: templates/openshift-mcp-server-pod.yaml.j2
+        dest: "{{ sno_mcp_dir }}/openshift-mcp-server-pod.yaml"
+        mode: '0644'
+      register: mcp_manifest
+      tags:
+        - deploy
+
+    - name: Check whether the pod is already running
+      containers.podman.podman_pod_info:
+        name: openshift-mcp-server
+      register: mcp_pod_info
+      failed_when: false
+      tags:
+        - deploy
+
+    # Redeploying restarts the server, so only do it when something it consumes
+    # actually changed — or when it is not up. Without this guard every re-run
+    # would bounce a healthy pod.
+    - name: Decide whether a redeploy is needed
+      ansible.builtin.set_fact:
+        mcp_needs_deploy: >-
+          {{ mcp_manifest.changed or mcp_secret_manifest.changed
+             or (mcp_pod_info.pods | default([]) | length) == 0
+             or (mcp_pod_info.pods | default([{}]) | first).State | default('') != 'Running' }}
+      tags:
+        - deploy
+
+    # Tear the previous deployment down first. podman kube play refuses to
+    # replace a running pod, and the Secret is immutable once created, so a
+    # re-run with a fresh token would otherwise keep serving the old one.
+    - name: Remove any previous pod
+      containers.podman.podman_pod:
+        name: openshift-mcp-server
+        state: absent
+      when: mcp_needs_deploy | bool
+      tags:
+        - deploy
+
+    - name: Remove any previous kubeconfig secret
+      containers.podman.podman_secret:
+        name: openshift-mcp-kubeconfig
+        state: absent
+      when: mcp_needs_deploy | bool
+      tags:
+        - deploy
+
+    # podman kube play reads a single stream, so both manifests are concatenated.
+    # Each document already starts with its own "---" separator; without one,
+    # podman rejects the stream with "multi doc yaml could not be split".
+    - name: Deploy the pod
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail &&
+          cat openshift-mcp-server-pod.yaml secret.yaml | podman kube play -
+        chdir: "{{ sno_mcp_dir }}"
+      register: mcp_play
+      changed_when: true
+      when: mcp_needs_deploy | bool
+      tags:
+        - deploy
+
+    - name: Wait for the MCP endpoint to answer
+      ansible.builtin.uri:
+        url: "http://localhost:{{ sno_mcp_port }}/healthz"
+        status_code: [200, 404]
+      register: mcp_health
+      until: mcp_health.status in [200, 404]
+      retries: 15
+      delay: 2
+      tags:
+        - deploy
+
+    # Proves the whole metrics path end to end — route resolution, TLS against
+    # the kubeconfig CA bundle, and the ServiceAccount token's RBAC — none of
+    # which the pod starting up would catch.
+    - name: Verify Thanos Querier is reachable with the ServiceAccount token
+      ansible.builtin.uri:
+        url: >-
+          https://thanos-querier-openshift-monitoring.apps.{{ sno_cluster_name }}.{{ sno_base_domain }}/api/v1/query?query=up
+        headers:
+          Authorization: "Bearer {{ mcp_token_secret.resources[0].data.token | b64decode }}"
+        validate_certs: "{{ not (sno_mcp_insecure_tls | bool) }}"
+        ca_path: "{{ (sno_mcp_dir ~ '/cluster-ca.crt') if not (sno_mcp_insecure_tls | bool) else omit }}"
+      register: mcp_thanos_check
+      failed_when: mcp_thanos_check.status != 200
+      no_log: true
+      tags:
+        - deploy
+        - verify
+
+    - name: Verify Alertmanager is reachable with the ServiceAccount token
+      ansible.builtin.uri:
+        url: >-
+          https://alertmanager-main-openshift-monitoring.apps.{{ sno_cluster_name }}.{{ sno_base_domain }}/api/v2/alerts
+        headers:
+          Authorization: "Bearer {{ mcp_token_secret.resources[0].data.token | b64decode }}"
+        validate_certs: "{{ not (sno_mcp_insecure_tls | bool) }}"
+        ca_path: "{{ (sno_mcp_dir ~ '/cluster-ca.crt') if not (sno_mcp_insecure_tls | bool) else omit }}"
+      register: mcp_alertmanager_check
+      failed_when: mcp_alertmanager_check.status != 200
+      no_log: true
+      tags:
+        - deploy
+        - verify
+
+    - name: Show what was configured
+      ansible.builtin.debug:
+        msg: >-
+          openshift-mcp-server is serving http://localhost:{{ sno_mcp_port }}/mcp
+          against {{ sno_cluster_name }}.{{ sno_base_domain }}. Register it with
+          "claude mcp add --transport http openshift-mcp-server
+          http://localhost:{{ sno_mcp_port }}/mcp --scope user".
+          Generated files are in {{ sno_mcp_dir }} (secret.yaml is mode 0600 and
+          holds cluster credentials). Removed again by 99-destroy-all.yml.
+      tags:
+        - always
