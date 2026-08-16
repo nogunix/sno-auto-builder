@@ -1,26 +1,49 @@
-upstream sno_ingress_https {
-    server {{ sno_ingress_vip }}:443;
-}
+# Managed by 03-expose-console.yml — 手で編集しても次回実行で上書きされる。
+#
+# 家の LAN からクラスタの Route / API に中継する。
+#
+#   LAN 192.168.x.0/24 ──> このホスト :443 ──(SNI パススルー)──> {{ sno_ingress_vip }}:443
+#                          このホスト :6443 ─────────────────> {{ sno_api_vip }}:6443
+#
+# TLS はここで終端せず、SNI だけ覗いて素通しする (ssl_preread)。
+# 証明書はクラスタの router が出すものがそのままクライアントに届く。
+#
+# 443 は既知の SNI 以外を転送しない (LAN に対する野良中継にしないため)。
 
-upstream sno_ingress_http {
-    server {{ sno_ingress_vip }}:80;
-}
-
-upstream sno_api {
-    server {{ sno_api_vip }}:6443;
+map $ssl_preread_server_name $sno_upstream {
+    hostnames;
+    default                                              "";
+    *.apps.{{ sno_cluster_name }}.{{ sno_base_domain }}  {{ sno_ingress_vip }}:443;
+{% for route in sno_extra_sni_routes | default([]) %}
+    {{ route.name }}  {{ route.upstream }};
+{% endfor %}
 }
 
 server {
     listen 443;
-    proxy_pass sno_ingress_https;
+    ssl_preread on;
+    proxy_pass $sno_upstream;
+
+    proxy_connect_timeout 10s;
+    proxy_timeout         10m;   # コンソールは WebSocket を使うので長めに
 }
 
-server {
-    listen 80;
-    proxy_pass sno_ingress_http;
-}
-
+# API は単一クラスタ向けなので SNI 判定を挟まず素通しする。
+# 他マシンの /etc/hosts に api.{{ sno_cluster_name }}.{{ sno_base_domain }} を
+# このホストの IP で書けば、そのまま oc login できる。
 server {
     listen 6443;
-    proxy_pass sno_api;
+    proxy_pass {{ sno_api_vip }}:6443;
+
+    proxy_connect_timeout 10s;
+    proxy_timeout         10m;
+}
+
+# 平文 HTTP の Route 用。HTTP には SNI が無いので判定できず素通しになる。
+# console は https へリダイレクトされるので、通常ここは使わない。
+server {
+    listen 80;
+    proxy_pass {{ sno_ingress_vip }}:80;
+
+    proxy_connect_timeout 10s;
 }

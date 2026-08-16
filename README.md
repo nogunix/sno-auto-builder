@@ -198,6 +198,19 @@ ansible-playbook 03-expose-console.yml
 
 This installs nginx, configures SSL passthrough to the SNO ingress VIP, and opens ports 80/443/6443 in firewalld.
 
+Port 443 routes on SNI (`ssl_preread`), so only known hostnames are forwarded and
+the host does not become an open relay for the LAN. `*.apps.<cluster>.<domain>` is
+always forwarded. To relay another cluster through the same host — one this repo
+did not build, or a second lab — add it to `sno_extra_sni_routes` in `vars.yml`:
+
+```yaml
+sno_extra_sni_routes:
+  - name: "*.apps.other-lab.home.lab"
+    upstream: "192.168.130.10:443"
+```
+
+Leave it empty (or omit it) if you only run one cluster.
+
 At the end of the playbook, the required `/etc/hosts` entries are saved to `~/sno-lab/hosts-entries.txt`. View them with:
 
 ```bash
