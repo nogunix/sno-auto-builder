@@ -61,6 +61,15 @@ sno_interface: "enp1s0"
 sno_api_vip: "192.168.10.100"
 sno_ingress_vip: "192.168.10.101"
 
+# 03-expose-console.yml — 443 は SNI を見て転送先を決める。このリポジトリが作る
+# クラスタ (*.apps.{{ sno_cluster_name }}.{{ sno_base_domain }}) は常に転送対象。
+# それ以外のクラスタにも中継したい場合だけここに足す。空でよい。
+#   name     — map のパターン (ワイルドカード可)
+#   upstream — 転送先 host:port
+sno_extra_sni_routes:
+  - name: "*.apps.sno-lab.home.lab"
+    upstream: "192.168.130.10:443"
+
 # Paths used for ISO generation on localhost and cluster monitoring (set by 01-infra-bastion.yml)
 sno_installer_path: "{{ sno_tf_dir }}/openshift-install"
 sno_manifests_dir: "{{ sno_tf_dir }}/generated/{{ sno_cluster_name }}"
