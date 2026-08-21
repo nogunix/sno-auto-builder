@@ -64,7 +64,50 @@
         mode: '0755'
       become: true
 
-    - name: Deploy SNO stream proxy config
+    - name: Create backends.d directory for SNI routing
+      ansible.builtin.file:
+        path: /etc/nginx/stream.d/backends.d
+        state: directory
+        mode: '0755'
+      become: true
+
+    - name: Register this cluster as an nginx backend
+      ansible.builtin.copy:
+        dest: "/etc/nginx/stream.d/backends.d/{{ sno_cluster_name }}.{{ sno_base_domain }}.json"
+        content: "{{ _backend | to_nice_json }}\n"
+        mode: '0644'
+      become: true
+      vars:
+        _backend:
+          apps_domain: "apps.{{ sno_cluster_name }}.{{ sno_base_domain }}"
+          api_domain: "api.{{ sno_cluster_name }}.{{ sno_base_domain }}"
+          ingress_vip: "{{ sno_ingress_vip }}"
+          api_vip: "{{ sno_api_vip }}"
+
+    - name: Discover all registered backends
+      ansible.builtin.find:
+        paths: /etc/nginx/stream.d/backends.d
+        patterns: '*.json'
+      register: _backend_files
+      become: true
+
+    - name: Read backend definitions
+      ansible.builtin.slurp:
+        src: "{{ item.path }}"
+      loop: "{{ _backend_files.files }}"
+      register: _backend_slurps
+      become: true
+
+    - name: Build backends list from discovered definitions
+      ansible.builtin.set_fact:
+        sno_all_backends: >-
+          {{ _backend_slurps.results
+             | map(attribute='content')
+             | map('b64decode')
+             | map('from_json')
+             | list }}
+
+    - name: Deploy SNI stream proxy config
       ansible.builtin.template:
         src: templates/nginx-sno-stream.conf.j2
         dest: /etc/nginx/stream.d/sno.conf
@@ -136,11 +179,18 @@
         state: present
       become: true
 
-    - name: Deploy SNO wildcard DNS config
+    - name: Deploy per-cluster wildcard DNS config
       ansible.builtin.template:
         src: templates/dnsmasq-sno.conf.j2
-        dest: /etc/dnsmasq.d/sno.conf
+        dest: "/etc/dnsmasq.d/sno-{{ sno_cluster_name }}.{{ sno_base_domain }}.conf"
         mode: '0644'
+      become: true
+      notify: Restart dnsmasq
+
+    - name: Remove legacy dnsmasq config (pre-SNI naming)
+      ansible.builtin.file:
+        path: /etc/dnsmasq.d/sno.conf
+        state: absent
       become: true
       notify: Restart dnsmasq
 

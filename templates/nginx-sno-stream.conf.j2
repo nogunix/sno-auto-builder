@@ -1,26 +1,35 @@
-upstream sno_ingress_https {
-    server {{ sno_ingress_vip }}:443;
+# SNI-based stream proxy for OpenShift clusters
+# Managed by 03-expose-console.yml — removed by 99-destroy-all.yml
+# Routes TLS traffic based on Server Name Indication (SNI), allowing
+# multiple clusters to share ports 443 and 6443 on the same host.
+
+map $ssl_preread_server_name $sno_https_backend {
+{% for b in sno_all_backends %}
+    ~\.{{ b.apps_domain | replace('.', '\\.') }}$    {{ b.ingress_vip }}:443;
+{% endfor %}
+    default    {{ sno_all_backends[0].ingress_vip }}:443;
 }
 
-upstream sno_ingress_http {
-    server {{ sno_ingress_vip }}:80;
-}
-
-upstream sno_api {
-    server {{ sno_api_vip }}:6443;
+map $ssl_preread_server_name $sno_api_backend {
+{% for b in sno_all_backends %}
+    {{ b.api_domain }}    {{ b.api_vip }}:6443;
+{% endfor %}
+    default    {{ sno_all_backends[0].api_vip }}:6443;
 }
 
 server {
     listen 443;
-    proxy_pass sno_ingress_https;
+    ssl_preread on;
+    proxy_pass $sno_https_backend;
 }
 
 server {
     listen 80;
-    proxy_pass sno_ingress_http;
+    proxy_pass {{ sno_all_backends[0].ingress_vip }}:80;
 }
 
 server {
     listen 6443;
-    proxy_pass sno_api;
+    ssl_preread on;
+    proxy_pass $sno_api_backend;
 }
