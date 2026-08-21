@@ -196,15 +196,34 @@ Run the following playbook to expose the console to your home network via an ngi
 ansible-playbook 03-expose-console.yml
 ```
 
-This installs nginx, configures SSL passthrough to the SNO ingress VIP, and opens ports 80/443/6443 in firewalld.
+This installs nginx, configures SSL passthrough to the SNO ingress VIP, opens ports 80/443/6443 in firewalld, and sets up **dnsmasq wildcard DNS** so every `*.apps` Route resolves automatically for LAN clients.
 
-At the end of the playbook, the required `/etc/hosts` entries are saved to `~/sno-lab/hosts-entries.txt`. View them with:
+### LAN client setup (recommended)
+
+Configure a per-domain resolver on each client device to use dnsmasq on the host. This is a one-time setup — all current and future Routes resolve automatically.
+
+**Mac:**
+
+```bash
+sudo bash -c 'mkdir -p /etc/resolver && echo "nameserver <fedora-host-ip>" > /etc/resolver/example.com'
+```
+
+**Linux:**
+
+```bash
+resolvectl dns <interface> <fedora-host-ip>
+# or add "nameserver <fedora-host-ip>" to /etc/resolv.conf
+```
+
+> Replace `example.com` with your `sno_base_domain` from `vars.yml`.
+
+### Fallback: `/etc/hosts`
+
+If you cannot configure a resolver, copy the entries from `~/sno-lab/hosts-entries.txt` into each device's `/etc/hosts`:
 
 ```bash
 cat ~/sno-lab/hosts-entries.txt
 ```
-
-Add the entries to each device on your home network:
 
 ```
 <fedora-host-ip>  console-openshift-console.apps.ocp4.example.com
@@ -213,8 +232,11 @@ Add the entries to each device on your home network:
 ```
 
 > Update hostnames to match `sno_cluster_name` and `sno_base_domain` in `vars.yml`.
+> Note: with `/etc/hosts` only the listed names resolve — custom Routes require additional entries.
 
-Then open in your browser (no proxy settings needed):
+### Access the console
+
+Open in your browser:
 
 ```
 https://console-openshift-console.apps.ocp4.example.com
@@ -246,7 +268,8 @@ This checks:
 - Node status (`Ready`)
 - Cluster version and all cluster operators (`Available`)
 - nginx status and web console HTTP reachability (if `03-expose-console.yml` was run)
-- Prints `/etc/hosts` entries needed on client machines and the `kubeadmin` password
+- dnsmasq wildcard DNS resolution (if `03-expose-console.yml` was run)
+- Prints LAN client resolver setup instructions and the `kubeadmin` password
 
 ## Teardown
 

@@ -102,8 +102,8 @@ The console check passes `curl --resolve …:443:<host IP>` deliberately, even t
 |---|---|---|
 | `01-infra-bastion.yml` | localhost → bastion → localhost | Renders Terraform templates, calls `terraform apply` to create pool/networks/bastion VM, SSHes into bastion to install helper services (dnsmasq, squid, HAProxy, NFS, chrony), then generates the Agent ISO on **localhost** via `openshift-install agent create image` (built in `sno_manifests_dir`, then copied to `sno_tf_dir`) |
 | `02-create-sno-cluster.yml` | localhost | Renders `master.tf.j2`, calls `terraform apply` to create the SNO master VM which boots from the Agent ISO |
-| `03-expose-console.yml` | localhost | Installs nginx on the host, configures SSL stream passthrough to the SNO ingress VIP, opens ports 80/443/6443 in firewalld, adds the console `/etc/hosts` block on this host and writes `hosts-entries.txt` for other LAN devices |
-| `99-destroy-all.yml` | localhost | `terraform destroy`, manual `virsh undefine` fallbacks, removes `sno_base_dir`, cleans up nginx config and both `/etc/hosts` entries |
+| `03-expose-console.yml` | localhost | Installs nginx on the host, configures SSL stream passthrough to the SNO ingress VIP, opens ports 80/443/6443 in firewalld, adds the console `/etc/hosts` block on this host, writes `hosts-entries.txt` for fallback, and sets up **dnsmasq wildcard DNS** (`*.apps` → host LAN IP) so LAN clients only need a one-line resolver config |
+| `99-destroy-all.yml` | localhost | `terraform destroy`, manual `virsh undefine` fallbacks, removes `sno_base_dir`, cleans up nginx config, dnsmasq DNS config, and both `/etc/hosts` entries |
 
 ### Template rendering flow
 
@@ -117,6 +117,7 @@ All files in `templates/` are Jinja2 templates, rendered at runtime by the playb
 - `agent-config.yaml.j2` → rendered on localhost into `sno_manifests_dir`; `openshift-install agent create image` then generates the ISO
 - `nginx.conf.j2` → `/etc/nginx/nginx.conf` — stream-only nginx config (rendered by `03`)
 - `nginx-sno-stream.conf.j2` → `/etc/nginx/stream.d/sno.conf` — TCP stream proxy for ports 80/443/6443 (rendered by `03`)
+- `dnsmasq-sno.conf.j2` → `/etc/dnsmasq.d/sno.conf` — wildcard DNS for `*.apps` and `api`/`api-int` (rendered by `03`)
 
 ### Network topology
 
@@ -137,6 +138,7 @@ Host (libvirt)
 - **Secrets are marked `no_log`**: the tasks that render `login_bastion.sh` (mode `0700`, it embeds the password) and that `add_host` the bastion with `ansible_password` both set `no_log: true`. Do not remove it to make debugging easier.
 - **Provider is pinned to `dmacvicar/libvirt` 0.8.3 deliberately**: 0.9.x is a plugin-framework rewrite with an incompatible schema (`devices = { disks = [...] }`, `os = { boot_devices = [...] }` replace `disk`/`network_interface`/`cloudinit`/`boot_device`). Do not "upgrade" the pin without rewriting all three `.tf` templates.
 - **`03-expose-console.yml` is RedHat-family only** and asserts so up front: it uses `dnf`, `semanage`, `seboolean`, `firewalld`, and the `/etc/nginx/stream.d` layout. The other playbooks are portable. CI syntax-checks Ubuntu, but syntax-check does not execute these tasks.
+- **dnsmasq wildcard DNS complements `/etc/hosts`, not replaces it.** `/etc/hosts` on the host ensures resolution even if dnsmasq is down; dnsmasq on the host's LAN IP provides `*.apps` wildcard so every Route resolves for LAN clients without per-name entries. dnsmasq uses `listen-address` + `bind-interfaces` to bind only the LAN IP, avoiding port 53 conflicts with systemd-resolved (which listens on 127.0.0.53).
 - **Idempotency guard on bastion setup**: `helper_node.sh` writes `/etc/helper_node_setup_info` on completion; `01-infra-bastion.yml` skips the block if that file exists.
 - **ISO handoff**: the Agent ISO is generated on **localhost** (not the bastion) by `openshift-install agent create image` into `sno_manifests_dir`, then copied to `sno_tf_dir`; the master VM references it as a local file path in its disk block.
 - **Bastion cluster NIC**: assigned a static IP via cloud-init network config in `bastion.tf.j2`; `helper_node.sh` then adds the api/ingress VIPs as additional addresses via `nmcli`.

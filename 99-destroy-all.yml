@@ -98,3 +98,25 @@
         - "80"
         - "443"
         - "6443"
+
+    - name: Remove dnsmasq SNO wildcard DNS config
+      ansible.builtin.file:
+        path: /etc/dnsmasq.d/sno.conf
+        state: absent
+      become: true
+
+    - name: Restart dnsmasq after removing SNO config
+      ansible.builtin.systemd_service:
+        name: dnsmasq
+        state: restarted
+      become: true
+      failed_when: false
+
+    - name: Close DNS service in firewalld
+      ansible.posix.firewalld:
+        service: dns
+        permanent: true
+        state: disabled
+        immediate: true
+      become: true
+      failed_when: false

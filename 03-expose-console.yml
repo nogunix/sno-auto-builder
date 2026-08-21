@@ -118,17 +118,67 @@
           {{ sno_host_ip }} api.{{ sno_cluster_name }}.{{ sno_base_domain }}
         mode: '0644'
 
+    # --- Wildcard DNS via dnsmasq ---
+    # /etc/hosts only covers a fixed set of names; any new Route would fail to
+    # resolve on the LAN. dnsmasq provides *.apps wildcard so every Route works
+    # and LAN clients only need a one-line resolver config.
+    - name: Install dnsmasq
+      ansible.builtin.dnf:
+        name: dnsmasq
+        state: present
+      become: true
+
+    - name: Ensure /etc/dnsmasq.d/ is included in dnsmasq.conf
+      ansible.builtin.lineinfile:
+        path: /etc/dnsmasq.conf
+        line: "conf-dir=/etc/dnsmasq.d/,*.conf"
+        regexp: '^conf-dir=/etc/dnsmasq\.d'
+        state: present
+      become: true
+
+    - name: Deploy SNO wildcard DNS config
+      ansible.builtin.template:
+        src: templates/dnsmasq-sno.conf.j2
+        dest: /etc/dnsmasq.d/sno.conf
+        mode: '0644'
+      become: true
+      notify: Restart dnsmasq
+
+    - name: Open DNS service in firewalld
+      ansible.posix.firewalld:
+        service: dns
+        permanent: true
+        state: enabled
+        immediate: true
+      become: true
+
+    - name: Enable and start dnsmasq
+      ansible.builtin.systemd_service:
+        name: dnsmasq
+        enabled: true
+        state: started
+      become: true
+
     - name: Show what was configured
       ansible.builtin.debug:
         msg: >-
-          This host's /etc/hosts now resolves the console to {{ sno_host_ip }}
-          (removed again by 99-destroy-all.yml). For other devices on the LAN,
-          copy the lines in {{ sno_base_dir }}/hosts-entries.txt into their own
-          /etc/hosts.
+          nginx stream proxy + dnsmasq wildcard DNS configured on {{ sno_host_ip }}.
+          Console: https://console-openshift-console.apps.{{ sno_cluster_name }}.{{ sno_base_domain }}.
+          For LAN clients, configure a resolver
+          (Mac: sudo bash -c 'mkdir -p /etc/resolver &&
+          echo "nameserver {{ sno_host_ip }}" > /etc/resolver/{{ sno_base_domain }}').
+          Fallback: copy {{ sno_base_dir }}/hosts-entries.txt into their /etc/hosts.
+          Removed by 99-destroy-all.yml.
 
   handlers:
     - name: Reload nginx
       ansible.builtin.systemd_service:
         name: nginx
         state: reloaded
+      become: true
+
+    - name: Restart dnsmasq
+      ansible.builtin.systemd_service:
+        name: dnsmasq
+        state: restarted
       become: true
