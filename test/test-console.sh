@@ -132,12 +132,40 @@ else
     info "nginx not running — skipping console URL check (run 03-expose-console.yml to expose console)"
 fi
 
-# --- /etc/hosts hint ---
+# --- dnsmasq ---
 echo ""
-echo "[ /etc/hosts entries for OTHER devices on the LAN (this host is managed automatically) ]"
-echo "  ${HOST_IP}  console-openshift-console.apps.${CLUSTER_NAME}.${BASE_DOMAIN}"
-echo "  ${HOST_IP}  oauth-openshift.apps.${CLUSTER_NAME}.${BASE_DOMAIN}"
-echo "  ${HOST_IP}  api.${CLUSTER_NAME}.${BASE_DOMAIN}"
+echo "[ dnsmasq (03-expose-console.yml) ]"
+if systemctl is-active --quiet dnsmasq 2>/dev/null; then
+    ok "dnsmasq is active"
+    if [[ -f /etc/dnsmasq.d/sno.conf ]]; then
+        ok "SNO wildcard DNS config exists"
+        # Verify wildcard resolution via dnsmasq directly
+        WILDCARD_TEST="test-route-check.apps.${CLUSTER_NAME}.${BASE_DOMAIN}"
+        DIG_RESULT=$(dig +short "@${HOST_IP}" "$WILDCARD_TEST" 2>/dev/null) || true
+        if [[ "$DIG_RESULT" == "$HOST_IP" ]]; then
+            ok "Wildcard *.apps resolves to $HOST_IP via dnsmasq"
+        elif [[ -n "$DIG_RESULT" ]]; then
+            fail "Wildcard resolves to $DIG_RESULT, expected $HOST_IP"
+        else
+            info "dig not available or dnsmasq not reachable — wildcard check skipped"
+        fi
+    else
+        fail "SNO wildcard DNS config /etc/dnsmasq.d/sno.conf missing"
+    fi
+else
+    info "dnsmasq not running — LAN clients must use /etc/hosts (run 03-expose-console.yml for wildcard DNS)"
+fi
+
+# --- LAN client setup hint ---
+echo ""
+echo "[ LAN client setup ]"
+echo "  Recommended: configure a resolver to use dnsmasq on this host"
+echo "    Mac:   sudo bash -c 'mkdir -p /etc/resolver && echo \"nameserver ${HOST_IP}\" > /etc/resolver/${BASE_DOMAIN}'"
+echo "    Linux: resolvectl dns <IF> ${HOST_IP} or add nameserver ${HOST_IP} to /etc/resolv.conf"
+echo "  Fallback: copy these /etc/hosts entries"
+echo "    ${HOST_IP}  console-openshift-console.apps.${CLUSTER_NAME}.${BASE_DOMAIN}"
+echo "    ${HOST_IP}  oauth-openshift.apps.${CLUSTER_NAME}.${BASE_DOMAIN}"
+echo "    ${HOST_IP}  api.${CLUSTER_NAME}.${BASE_DOMAIN}"
 
 # --- kubeadmin password ---
 KUBEADMIN_FILE="${TF_DIR}/generated/${CLUSTER_NAME}/auth/kubeadmin-password"
