@@ -48,3 +48,23 @@
         src: templates/agent-config.yaml.j2
         dest: /tmp/sno-rendered/agent-config.yaml
         mode: "0644"
+
+    - name: Render nginx-sno-stream.conf
+      ansible.builtin.template:
+        src: templates/nginx-sno-stream.conf.j2
+        dest: /tmp/sno-rendered/nginx-sno-stream.conf
+        mode: "0644"
+      vars:
+        sno_all_backends:
+          - apps_domain: "apps.{{ sno_cluster_name }}.{{ sno_base_domain }}"
+            api_domain: "api.{{ sno_cluster_name }}.{{ sno_base_domain }}"
+            ingress_vip: "{{ sno_ingress_vip }}"
+            api_vip: "{{ sno_api_vip }}"
+
+    - name: Render dnsmasq-sno.conf
+      ansible.builtin.template:
+        src: templates/dnsmasq-sno.conf.j2
+        dest: /tmp/sno-rendered/dnsmasq-sno.conf
+        mode: "0644"
+      vars:
+        sno_host_ip: "192.168.20.1"
