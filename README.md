@@ -200,22 +200,60 @@ This installs nginx, configures SSL passthrough to the SNO ingress VIP, opens po
 
 ### LAN client setup (recommended)
 
-Configure a per-domain resolver on each client device to use dnsmasq on the host. This is a one-time setup — all current and future Routes resolve automatically.
+Configure a per-domain resolver on each client device to use dnsmasq on the host. This is a one-time setup — all current and future Routes resolve automatically. Only queries for `sno_base_domain` (default: `example.com`) go to the host; other DNS is unaffected.
 
-**Mac:**
+> Replace `<fedora-host-ip>` with the host's LAN IP and `example.com` with your `sno_base_domain` from `vars.yml` throughout.
+
+**macOS:**
 
 ```bash
 sudo bash -c 'mkdir -p /etc/resolver && echo "nameserver <fedora-host-ip>" > /etc/resolver/example.com'
+
+# Verify
+dig console-openshift-console.apps.ocp4.example.com  # should return <fedora-host-ip>
+
+# Remove (when no longer needed)
+sudo rm /etc/resolver/example.com
 ```
 
-**Linux:**
+**Linux (systemd-resolved — Fedora / Ubuntu):**
 
 ```bash
-resolvectl dns <interface> <fedora-host-ip>
-# or add "nameserver <fedora-host-ip>" to /etc/resolv.conf
+# Find your NIC name
+nmcli device status
+
+# Add per-domain DNS routing (immediate, non-persistent)
+sudo resolvectl dns enp3s0 <fedora-host-ip>
+sudo resolvectl domain enp3s0 ~example.com
+
+# Verify
+resolvectl query console-openshift-console.apps.ocp4.example.com
+
+# Persist via NetworkManager
+sudo nmcli connection modify "<connection-name>" ipv4.dns "<fedora-host-ip>" ipv4.dns-search "~example.com"
+sudo nmcli connection up "<connection-name>"
 ```
 
-> Replace `example.com` with your `sno_base_domain` from `vars.yml`.
+**Linux (no systemd-resolved — direct `/etc/resolv.conf`):**
+
+```bash
+echo 'nameserver <fedora-host-ip>' | sudo tee -a /etc/resolv.conf
+```
+
+> Note: `/etc/resolv.conf` does not support per-domain routing, so all DNS queries also go to the host. dnsmasq forwards non-matching queries to upstream DNS, so this is functionally harmless but systemd-resolved is preferred.
+
+**Windows (PowerShell as Administrator):**
+
+```powershell
+# Add conditional forwarder for the domain
+Add-DnsClientNrptRule -Namespace ".example.com" -NameServers "<fedora-host-ip>"
+
+# Verify
+nslookup console-openshift-console.apps.ocp4.example.com <fedora-host-ip>
+
+# Remove (when no longer needed)
+Get-DnsClientNrptRule | Where-Object Namespace -eq ".example.com" | Remove-DnsClientNrptRule
+```
 
 ### Fallback: `/etc/hosts`
 
