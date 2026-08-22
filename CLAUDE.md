@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Repo Does
 
-Automates deployment of **OpenShift Single Node (SNO)** on a Fedora/RHEL/CentOS Stream/Ubuntu host using Ansible + Terraform + libvirt/KVM. Two VMs are provisioned: a bastion (CentOS Stream) and an SNO master (RHCOS).
+Automates deployment of **OpenShift Single Node (SNO)** on a Fedora/RHEL/CentOS Stream/Ubuntu host using Ansible + OpenTofu + libvirt/KVM. Two VMs are provisioned: a bastion (CentOS Stream) and an SNO master (RHCOS).
 
 ## Running the Playbooks
 
@@ -68,7 +68,7 @@ ansible-playbook --syntax-check -i test/inventory \
 
 # 3. Render templates with default vars, then validate the generated .tf
 ansible-playbook test-render.yml          # writes to /tmp/sno-rendered
-cd /tmp/sno-rendered && terraform init -backend=false && terraform validate && terraform fmt -check -diff
+cd /tmp/sno-rendered && tofu init -backend=false && tofu validate && tofu fmt -check -diff
 ```
 
 `test-render.yml` (repo root) renders `infra.tf.j2`, `bastion.tf.j2`, `master.tf.j2`, `install-config.yaml.j2`, and `agent-config.yaml.j2` — no libvirt or VMs needed, so this is safe to run anywhere.
@@ -81,7 +81,7 @@ cd /tmp/sno-rendered && terraform init -backend=false && terraform validate && t
 ./test/test-console.sh      # exits non-zero if any check fails
 ```
 
-It reads the bastion IP from `terraform output -raw bastion_ip` (same source as the playbooks), SSHes in as the bastion user, and checks `oc`/`openshift-install`, node readiness, clusterversion, all ClusterOperators, nginx, and console HTTP reachability. It also prints the kubeadmin password, so avoid pasting its raw output into anything shared.
+It reads the bastion IP from `tofu output -raw bastion_ip` (same source as the playbooks), SSHes in as the bastion user, and checks `oc`/`openshift-install`, node readiness, clusterversion, all ClusterOperators, nginx, and console HTTP reachability. It also prints the kubeadmin password, so avoid pasting its raw output into anything shared.
 
 The console check passes `curl --resolve …:443:<host IP>` deliberately, even though `03-expose-console.yml` now manages the host's `/etc/hosts`: the check is about the proxy path, and it must give the same answer whether or not the resolver happens to be set up. Without `--resolve` it returned HTTP 000 against a perfectly healthy cluster. Keep it if you touch that check. Resolution is verified separately, as its own assertion.
 
@@ -108,11 +108,11 @@ The console check passes `curl --resolve …:443:<host IP>` deliberately, even t
 
 | Playbook | Runs on | What it does |
 |---|---|---|
-| `01-infra-bastion.yml` | localhost → bastion → localhost | Renders Terraform templates, calls `terraform apply` to create pool/networks/bastion VM, SSHes into bastion to install helper services (dnsmasq, squid, HAProxy, NFS, chrony), then generates the Agent ISO on **localhost** via `openshift-install agent create image` (built in `sno_manifests_dir`, then copied to `sno_tf_dir`) |
-| `02-create-sno-cluster.yml` | localhost | Renders `master.tf.j2`, calls `terraform apply` to create the SNO master VM which boots from the Agent ISO |
+| `01-infra-bastion.yml` | localhost → bastion → localhost | Renders OpenTofu templates, calls `tofu apply` to create pool/networks/bastion VM, SSHes into bastion to install helper services (dnsmasq, squid, HAProxy, NFS, chrony), then generates the Agent ISO on **localhost** via `openshift-install agent create image` (built in `sno_manifests_dir`, then copied to `sno_tf_dir`) |
+| `02-create-sno-cluster.yml` | localhost | Renders `master.tf.j2`, calls `tofu apply` to create the SNO master VM which boots from the Agent ISO |
 | `03-expose-console.yml` | localhost | Installs nginx on the host, configures SSL stream passthrough to the SNO ingress VIP, opens ports 80/443/6443 in firewalld, adds the console `/etc/hosts` block on this host and writes `hosts-entries.txt` for other LAN devices |
 | `04-deploy-mcp-server.yml` | localhost | Creates a read-only `mcp-metrics` ServiceAccount plus a long-lived token on the cluster, injects that token into a copy of the cluster kubeconfig, renders the pod manifest, adds the monitoring-route `/etc/hosts` block, and runs `openshift-mcp-server` under podman on the host |
-| `99-destroy-all.yml` | localhost | Removes the MCP pod/secret, `terraform destroy`, manual `virsh undefine` fallbacks, removes `sno_base_dir`, cleans up nginx config and all three `/etc/hosts` entries |
+| `99-destroy-all.yml` | localhost | Removes the MCP pod/secret, `tofu destroy`, manual `virsh undefine` fallbacks, removes `sno_base_dir`, cleans up nginx config and all three `/etc/hosts` entries |
 
 ### Template rendering flow
 
@@ -140,9 +140,9 @@ Host (libvirt)
 
 ### Key design decisions
 
-- **Terraform state is split**: infra (pool, networks, bastion) is managed by `01-infra-bastion.yml`; the master VM is managed by `02-create-sno-cluster.yml`. Playbook `01` explicitly removes `libvirt_domain.sno_prefix_master0` from state before applying, so re-running `01` never touches the master. **Re-run safety:** `01` is safe to re-run — it leaves a running master untouched (and the bastion setup is idempotency-guarded). Re-running `02` re-renders `master.tf` and re-applies the master VM, so only re-run it when you intend to recreate/reconfigure the master.
-- **Bastion IP comes from a Terraform output, not `virsh`**: the bastion's management NIC is DHCP, and `bastion.tf.j2` exposes the lease as the `bastion_ip` output (`wait_for_lease = true` guarantees it is populated at apply time). `01`, `02` and `test/test-console.sh` all read it with `terraform output -raw bastion_ip`. There is **no** `sno_bastion_ip` variable in `vars.yml` — it is a runtime fact only.
-  - **Gotcha:** when the output is missing (e.g. state predating this change), `terraform output -raw` writes a *warning to stdout* and still **exits 0**. An emptiness or exit-code check would treat that warning text as an IP, so every caller validates the IPv4 shape instead. Keep that validation if you touch these call sites.
+- **OpenTofu state is split**: infra (pool, networks, bastion) is managed by `01-infra-bastion.yml`; the master VM is managed by `02-create-sno-cluster.yml`. Playbook `01` explicitly removes `libvirt_domain.sno_prefix_master0` from state before applying, so re-running `01` never touches the master. **Re-run safety:** `01` is safe to re-run — it leaves a running master untouched (and the bastion setup is idempotency-guarded). Re-running `02` re-renders `master.tf` and re-applies the master VM, so only re-run it when you intend to recreate/reconfigure the master.
+- **Bastion IP comes from an OpenTofu output, not `virsh`**: the bastion's management NIC is DHCP, and `bastion.tf.j2` exposes the lease as the `bastion_ip` output (`wait_for_lease = true` guarantees it is populated at apply time). `01`, `02` and `test/test-console.sh` all read it with `tofu output -raw bastion_ip`. There is **no** `sno_bastion_ip` variable in `vars.yml` — it is a runtime fact only.
+  - **Gotcha:** when the output is missing (e.g. state predating this change), `tofu output -raw` writes a *warning to stdout* and still **exits 0**. An emptiness or exit-code check would treat that warning text as an IP, so every caller validates the IPv4 shape instead. Keep that validation if you touch these call sites.
 - **`/etc/hosts` is written by two playbooks, pointing at two different IPs — deliberately.** `02-create-sno-cluster.yml` adds one plain line for `api`/`api-int` → `sno_api_vip`, because the host reaches the VIP directly over the libvirt NAT network and `openshift-install wait-for` needs it during the install. `03-expose-console.yml` adds a marker block for the `apps.*` names → the *host's* LAN IP, which goes through the nginx stream proxy. Do **not** add `api` to the 03 block: two entries for the same name would shadow each other. Devices other than the host cannot reach the VIP at all, so `hosts-entries.txt` lists `api` → host IP for them. `99-destroy-all.yml` removes both, and the marker/line there must stay byte-identical to what 02 and 03 write or teardown silently leaks a stale entry.
 - **Secrets are marked `no_log`**: the tasks that render `login_bastion.sh` (mode `0700`, it embeds the password) and that `add_host` the bastion with `ansible_password` both set `no_log: true`. Do not remove it to make debugging easier. In `04-deploy-mcp-server.yml` the same applies to every task that touches the ServiceAccount token or the kubeconfig body.
 - **`04`'s `/etc/hosts` block is what makes the metrics tools work, not the pod's `hostAliases`.** Under `hostNetwork: true`, `podman kube play` silently ignores `hostAliases` and seeds the container's `/etc/hosts` from the *host's* file. The manifest keeps its `hostAliases` as documentation and as a fallback if `hostNetwork` is ever dropped, but the host block is load-bearing — without it the tools fail with `dial tcp: lookup ...: no such host`. Its names point straight at `sno_ingress_vip`, unlike `03`'s console block which goes via the host's LAN IP: the MCP server runs on this host and reaches the VIP directly, so the nginx hairpin would be pointless. The two name sets are disjoint, so neither shadows the other.
@@ -160,7 +160,7 @@ Host (libvirt)
 
 All tunable parameters are in `vars.yml`. Fields marked `[CHANGE]` must be reviewed before first run:
 
-- `sno_base_dir` — where Terraform state, pool, and ISO land on the host (default: `~/sno-lab`)
+- `sno_base_dir` — where OpenTofu state, pool, and ISO land on the host (default: `~/sno-lab`)
 - `sno_cluster_version` — OCP release stream (e.g. `stable`, `stable-4.21`)
 - `sno_bastion_password` / `sno_bastion_os_image` — bastion credentials and cloud image URL
 - `sno_cluster_name` / `sno_base_domain` — cluster FQDN components
@@ -168,13 +168,13 @@ All tunable parameters are in `vars.yml`. Fields marked `[CHANGE]` must be revie
 - MAC addresses for bastion NICs (`sno_bastion_mac_mgmt`, `sno_bastion_mac_sno`) — must be unique on the host
 - `sno_mgmt_network` / `sno_mgmt_bridge` — CIDR and bridge name for `default_network` (were hardcoded in `infra.tf.j2` before)
 
-The bastion's management IP is deliberately **absent** from `vars.yml` — see the Terraform-output design decision above.
+The bastion's management IP is deliberately **absent** from `vars.yml` — see the OpenTofu-output design decision above.
 
 ## CI
 
 - **Lint** (`.github/workflows/lint.yml`): runs `ansible-lint` on every push/PR to `main`
 - **Test** (`.github/workflows/test.yml`): runs on every push/PR to `main`
   - **Syntax check**: `ansible-playbook --syntax-check` on all 4 playbooks, across 6 distros (Fedora 43/44, CentOS Stream 9/10, Ubuntu 24.04/26.04) using container jobs
-  - **Template render + terraform validate**: renders all Jinja2 templates with default vars, then runs `terraform init -backend=false`, `terraform validate` and `terraform fmt -check -diff` on the generated `.tf` files (uses `hashicorp/setup-terraform@v3` with `terraform_wrapper: false`). Templates must therefore render *already formatted* — run `terraform fmt` on `/tmp/sno-rendered` and port any change back into the `.j2` source.
+  - **Template render + tofu validate**: renders all Jinja2 templates with default vars, then runs `tofu init -backend=false`, `tofu validate` and `tofu fmt -check -diff` on the generated `.tf` files (uses `opentofu/setup-opentofu@v1` with `tofu_wrapper: false`). Templates must therefore render *already formatted* — run `tofu fmt` on `/tmp/sno-rendered` and port any change back into the `.j2` source.
   - Test playbook is `test-render.yml` (repo root); minimal inventory for syntax check is `test/inventory`
 - **OCP version check** (`.github/workflows/ocp-version-check.yml`): runs weekly (Monday 00:00 UTC), fetches the current stable OCP version, verifies download URLs for `oc`/`openshift-install`, re-runs `ansible-lint`, and opens a GitHub issue (or adds a comment to an existing one) if anything fails

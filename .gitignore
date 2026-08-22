@@ -1,4 +1,4 @@
-# Terraform state / plans (generated under /terraform on the host)
+# OpenTofu state / plans (generated under the work dir on the host)
 *.tfstate
 *.tfstate.*
 .terraform/
