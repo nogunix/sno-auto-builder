@@ -6,20 +6,6 @@
     - vars.yml
 
   tasks:
-    # Before terraform destroy: the pod holds a kubeconfig for a cluster that is
-    # about to disappear, and podman keeps both pod and secret across reboots.
-    - name: Remove the openshift-mcp-server pod
-      containers.podman.podman_pod:
-        name: openshift-mcp-server
-        state: absent
-      failed_when: false
-
-    - name: Remove the openshift-mcp-server kubeconfig secret
-      containers.podman.podman_secret:
-        name: openshift-mcp-kubeconfig
-        state: absent
-      failed_when: false
-
     - name: Check if work directory exists
       ansible.builtin.stat:
         path: "{{ sno_tf_dir }}"
@@ -78,21 +64,68 @@
         state: absent
       become: true
 
-    # Marker must stay byte-identical to what 04-deploy-mcp-server.yml writes.
-    # The cluster-side ServiceAccount and its bindings need no cleanup here —
-    # terraform destroy takes the whole cluster with them.
-    - name: Remove SNO MCP monitoring route entries from /etc/hosts
-      ansible.builtin.blockinfile:
-        path: /etc/hosts
-        marker: "# {mark} SNO MCP monitoring routes ({{ sno_cluster_name }}.{{ sno_base_domain }})"
+    # --- nginx backend-aware cleanup ---
+    # If other clusters still have backends registered, rebuild the SNI config
+    # instead of tearing nginx down entirely.
+    - name: Remove this cluster's nginx backend definition
+      ansible.builtin.file:
+        path: "/etc/nginx/stream.d/backends.d/{{ sno_cluster_name }}.{{ sno_base_domain }}.json"
         state: absent
       become: true
 
-    - name: Remove nginx SNO stream config
+    - name: Check if backends.d directory exists
+      ansible.builtin.stat:
+        path: /etc/nginx/stream.d/backends.d
+      register: _backends_dir
+
+    - name: Find remaining nginx backends
+      ansible.builtin.find:
+        paths: /etc/nginx/stream.d/backends.d
+        patterns: '*.json'
+      register: _remaining_backends
+      become: true
+      when: _backends_dir.stat.exists | default(false)
+
+    - name: Read remaining backend definitions
+      ansible.builtin.slurp:
+        src: "{{ item.path }}"
+      loop: "{{ _remaining_backends.files }}"
+      register: _remaining_slurps
+      become: true
+      when: (_remaining_backends.matched | default(0)) > 0
+
+    - name: Rebuild nginx config with remaining backends
+      ansible.builtin.template:
+        src: templates/nginx-sno-stream.conf.j2
+        dest: /etc/nginx/stream.d/sno.conf
+        mode: '0644'
+      become: true
+      vars:
+        sno_all_backends: >-
+          {{ _remaining_slurps.results
+             | map(attribute='content')
+             | map('b64decode')
+             | map('from_json')
+             | list }}
+      when: (_remaining_backends.matched | default(0)) > 0
+
+    - name: Reload nginx after backend rebuild
+      ansible.builtin.systemd_service:
+        name: nginx
+        state: reloaded
+      become: true
+      failed_when: false
+      when: (_remaining_backends.matched | default(0)) > 0
+
+    - name: Remove nginx SNO stream config (no backends left)
       ansible.builtin.file:
-        path: /etc/nginx/stream.d/sno.conf
+        path: "{{ item }}"
         state: absent
       become: true
+      loop:
+        - /etc/nginx/stream.d/sno.conf
+        - /etc/nginx/stream.d/backends.d
+      when: (_remaining_backends.matched | default(0)) == 0
 
     - name: Remove SNO stream block from nginx.conf
       ansible.builtin.blockinfile:
@@ -101,16 +134,18 @@
         block: ""
       become: true
       failed_when: false
+      when: (_remaining_backends.matched | default(0)) == 0
 
-    - name: Stop and disable nginx
+    - name: Stop and disable nginx (no backends left)
       ansible.builtin.systemd_service:
         name: nginx
         enabled: false
         state: stopped
       become: true
       failed_when: false
+      when: (_remaining_backends.matched | default(0)) == 0
 
-    - name: Close firewalld ports (80, 443, 6443)
+    - name: Close firewalld ports (no backends left)
       ansible.posix.firewalld:
         port: "{{ item }}/tcp"
         permanent: true
@@ -122,3 +157,29 @@
         - "80"
         - "443"
         - "6443"
+      when: (_remaining_backends.matched | default(0)) == 0
+
+    - name: Remove dnsmasq wildcard DNS config for this cluster
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      become: true
+      loop:
+        - "/etc/dnsmasq.d/sno-{{ sno_cluster_name }}.{{ sno_base_domain }}.conf"
+        - "/etc/dnsmasq.d/sno.conf"
+
+    - name: Restart dnsmasq after removing SNO config
+      ansible.builtin.systemd_service:
+        name: dnsmasq
+        state: restarted
+      become: true
+      failed_when: false
+
+    - name: Close DNS service in firewalld
+      ansible.posix.firewalld:
+        service: dns
+        permanent: true
+        state: disabled
+        immediate: true
+      become: true
+      failed_when: false

@@ -1,0 +1,7 @@
+# Wildcard DNS for {{ sno_cluster_name }}.{{ sno_base_domain }}
+# Managed by 03-expose-console.yml — removed by 99-destroy-all.yml
+listen-address={{ sno_host_ip }}
+bind-interfaces
+address=/apps.{{ sno_cluster_name }}.{{ sno_base_domain }}/{{ sno_host_ip }}
+address=/api.{{ sno_cluster_name }}.{{ sno_base_domain }}/{{ sno_host_ip }}
+address=/api-int.{{ sno_cluster_name }}.{{ sno_base_domain }}/{{ sno_host_ip }}
