@@ -40,7 +40,7 @@ Designed to run on a mini PC with **32 GB RAM**:
 ## Prerequisites
 
 - Fedora / RHEL 9+ / CentOS Stream 9+ / Ubuntu 22.04+ + libvirt/KVM
-- `ansible-core` / `terraform` / `sshpass`
+- `ansible-core` / `tofu` (OpenTofu) / `sshpass`
 - OpenShift pull secret at `~/openshift-pull-secret/openshift-pull-secret.txt`
 
   A Red Hat Developer account is required (free): https://developers.redhat.com/register  
@@ -52,11 +52,11 @@ Designed to run on a mini PC with **32 GB RAM**:
 ### Fedora
 
 ```bash
-# Terraform is not in the Fedora repos — add HashiCorp's
-sudo curl -Lo /etc/yum.repos.d/hashicorp.repo \
-  https://rpm.releases.hashicorp.com/fedora/hashicorp.repo
-sudo dnf install -y ansible-core terraform sshpass
+sudo dnf install -y ansible-core opentofu sshpass
 ```
+
+> Not packaged on your release? Use the official installer:
+> `curl -fsSL https://get.opentofu.org/install-opentofu.sh -o install-opentofu.sh && chmod +x install-opentofu.sh && ./install-opentofu.sh --install-method rpm`
 
 ### RHEL 9+ / CentOS Stream 9+
 
@@ -64,34 +64,30 @@ sudo dnf install -y ansible-core terraform sshpass
 # RHEL only: enable EPEL (provides sshpass)
 sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
 
-# Add HashiCorp repo and install packages
-sudo curl -Lo /etc/yum.repos.d/hashicorp.repo \
-  https://rpm.releases.hashicorp.com/RHEL/hashicorp.repo
-sudo dnf install -y ansible-core terraform sshpass
+# OpenTofu is not in the RHEL/CentOS repos — use the official installer
+curl -fsSL https://get.opentofu.org/install-opentofu.sh -o install-opentofu.sh
+chmod +x install-opentofu.sh && ./install-opentofu.sh --install-method rpm
+sudo dnf install -y ansible-core sshpass
 ```
 
 ### Ubuntu 22.04+
 
 ```bash
-# Add HashiCorp repo and install packages
-wget -qO- https://apt.releases.hashicorp.com/gpg \
-  | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
-echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] \
-https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
-  | sudo tee /etc/apt/sources.list.d/hashicorp.list
-sudo apt-get update
-sudo apt-get install -y ansible-core terraform sshpass
+# OpenTofu official installer (adds the deb repo and installs tofu)
+curl -fsSL https://get.opentofu.org/install-opentofu.sh -o install-opentofu.sh
+chmod +x install-opentofu.sh && ./install-opentofu.sh --install-method deb
+sudo apt-get install -y ansible-core sshpass
 ```
 
-> The playbooks pin the `dmacvicar/libvirt` provider to **0.8.3**, which `terraform init` fetches automatically. The pin is deliberate: 0.9.x is a plugin-framework rewrite with an incompatible resource schema, so it is not a drop-in upgrade.
+> The playbooks pin the `dmacvicar/libvirt` provider to **0.8.3**, which `tofu init` fetches automatically from `registry.opentofu.org`. The pin is deliberate: 0.9.x is a plugin-framework rewrite with an incompatible resource schema, so it is not a drop-in upgrade.
 >
-> Migrating a lab that was previously built with OpenTofu? Its state records the provider under `registry.opentofu.org`, which `terraform init` refuses to install. Either rebuild it (`99-destroy-all.yml`) or rewrite the address:
+> Migrating a lab that was previously built with Terraform? Its state records the provider under `registry.terraform.io`, which `tofu init` will not install. Either rebuild it (`99-destroy-all.yml`, the clean path) or rewrite the address:
 >
 > ```bash
 > cd ~/sno-lab/work
-> terraform state replace-provider \
->   registry.opentofu.org/dmacvicar/libvirt registry.terraform.io/dmacvicar/libvirt
-> rm -rf .terraform .terraform.lock.hcl && terraform init
+> tofu state replace-provider \
+>   registry.terraform.io/dmacvicar/libvirt registry.opentofu.org/dmacvicar/libvirt
+> rm -rf .terraform .terraform.lock.hcl && tofu init
 > ```
 
 ### libvirt daemons
@@ -111,7 +107,7 @@ done
 Edit `vars.yml` to set the cluster name, IPs, MAC addresses, OCP version, etc.  
 Review all items marked with `[CHANGE]`.
 
-The bastion's **management IP is not configurable** — it comes from the libvirt DHCP lease on `default_network`. The playbooks read it back from the `bastion_ip` Terraform output, so there is nothing to keep in sync. The management subnet and bridge themselves are `sno_mgmt_network` / `sno_mgmt_bridge`.
+The bastion's **management IP is not configurable** — it comes from the libvirt DHCP lease on `default_network`. The playbooks read it back from the `bastion_ip` OpenTofu output, so there is nothing to keep in sync. The management subnet and bridge themselves are `sno_mgmt_network` / `sno_mgmt_bridge`.
 
 `sno_bastion_password` is stored in plaintext by default. For anything beyond a throwaway lab, encrypt it:
 
@@ -336,7 +332,7 @@ bash test/test-console.sh
 ```
 
 This checks:
-- Bastion IP resolves from the `bastion_ip` Terraform output
+- Bastion IP resolves from the `bastion_ip` OpenTofu output
 - `oc` and `openshift-install` binaries on the bastion
 - Node status (`Ready`)
 - Cluster version and all cluster operators (`Available`)
