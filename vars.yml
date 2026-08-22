@@ -16,7 +16,7 @@ sno_tf_dir: "{{ sno_base_dir }}/work"
 
 # [CHANGE] OpenShift Version — pin to a specific release, e.g. "stable-4.22"
 # Pull secret — download from https://console.redhat.com/openshift/install/pull-secret
-sno_cluster_version: "stable"
+sno_cluster_version: "stable-4.20"
 sno_pull_secret_path: "{{ lookup('env', 'HOME') }}/openshift-pull-secret/openshift-pull-secret.txt"
 
 # Management network (default_network) — host ↔ bastion, DHCP-assigned
