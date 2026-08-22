@@ -7,6 +7,8 @@
 
 Automatically deploy **OpenShift Single Node (SNO)** on Fedora / RHEL / CentOS Stream / Ubuntu + libvirt using the **Agent-based installer**.
 
+Ansible drives the whole flow; **OpenTofu** provisions the libvirt objects (pool, networks, bastion VM, master VM).
+
 **CI tested on:** Fedora 43 · Fedora 44 · CentOS Stream 9 · CentOS Stream 10 · Ubuntu 24.04 · Ubuntu 26.04
 
 **SNO** is an OpenShift cluster topology that runs all control-plane components on a single master node.  
@@ -292,11 +294,38 @@ This checks:
 - nginx status and web console HTTP reachability (if `03-expose-console.yml` was run)
 - Prints `/etc/hosts` entries needed on client machines and the `kubeadmin` password
 
+### Full lifecycle test
+
+`test/cycle-test.sh` runs create → verify → destroy unattended and prints a
+per-phase duration table. Use it to prove a change end-to-end rather than
+eyeballing a single playbook run.
+
+```bash
+./test/cycle-test.sh --preflight-only   # environment checks only, creates nothing
+./test/cycle-test.sh                    # one full cycle (1.5-2.5 h)
+./test/cycle-test.sh -n 3               # three back-to-back cycles
+./test/cycle-test.sh --keep             # create + verify, skip the teardown
+```
+
+Preflight alone is worth running before any long job: it checks the tool
+chain, passwordless sudo, libvirt reachability, the pull secret, free
+memory/disk, a conflicting `default` pool, and leftovers from a prior run.
+
+> Phase logs land in `~/sno-cycle-logs/<timestamp>/`. The console-check log
+> contains the **kubeadmin password**, so the directory is created mode 0700 —
+> do not paste raw logs anywhere shared.
+
 ## Teardown
 
 ```bash
 ansible-playbook 99-destroy-all.yml
 ```
+
+This runs `tofu destroy` and then sweeps up by hand: `virsh undefine` for
+anything the state no longer knows about, removal of `sno_base_dir`, the
+nginx console config, and the `/etc/hosts` entries the playbooks added. The
+manual sweep matters because a lost or partial state file would otherwise
+leave orphaned domains and networks behind.
 
 ## Scaling Up
 
