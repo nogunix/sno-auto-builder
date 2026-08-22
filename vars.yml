@@ -9,7 +9,7 @@
 sno_prefix: "sno01"
 
 # Host Paths — all generated files are placed under sno_base_dir
-# [CHANGE] sno_base_dir — base directory for all generated files (pool, terraform state, ISO, scripts)
+# [CHANGE] sno_base_dir — base directory for all generated files (pool, OpenTofu state, ISO, scripts)
 sno_base_dir: "{{ lookup('env', 'HOME') }}/sno-lab"
 sno_pool_dir: "{{ sno_base_dir }}/pool"
 sno_tf_dir: "{{ sno_base_dir }}/work"
@@ -21,7 +21,7 @@ sno_pull_secret_path: "{{ lookup('env', 'HOME') }}/openshift-pull-secret/openshi
 
 # Management network (default_network) — host ↔ bastion, DHCP-assigned
 # The bastion's management IP is NOT fixed here: it comes from the libvirt DHCP
-# lease and is read back from the `bastion_ip` Terraform output at runtime.
+# lease and is read back from the `bastion_ip` OpenTofu output at runtime.
 sno_mgmt_network: "192.168.222.0/24"
 sno_mgmt_bridge: "defbr0"
 

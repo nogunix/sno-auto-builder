@@ -65,14 +65,14 @@
         - "{{ sno_prefix }}_network.tf"
         - "{{ sno_prefix }}_cluster_master0.tf"
 
-    - name: Remove SNO master domain from terraform state if present (managed by 02-create-sno-cluster.yml)
+    - name: Remove SNO master domain from OpenTofu state if present (managed by 02-create-sno-cluster.yml)
       ansible.builtin.command:
-        cmd: terraform state rm libvirt_domain.{{ sno_prefix }}_master0
+        cmd: tofu state rm libvirt_domain.{{ sno_prefix }}_master0
         chdir: "{{ sno_tf_dir }}"
       failed_when: false
       changed_when: false
 
-    - name: Generate Terraform manifests
+    - name: Generate OpenTofu manifests
       ansible.builtin.template:
         src: "templates/{{ item.src }}"
         dest: "{{ sno_tf_dir }}/{{ item.dest }}"
@@ -81,23 +81,23 @@
         - {src: infra.tf.j2, dest: "infra.tf"}
         - {src: bastion.tf.j2, dest: "{{ sno_prefix }}_bastion0.tf"}
 
-    - name: Terraform init
+    - name: OpenTofu init
       ansible.builtin.command:
-        cmd: terraform init -input=false
+        cmd: tofu init -input=false
         chdir: "{{ sno_tf_dir }}"
       register: tf_init
       changed_when: "'has been successfully initialized' in tf_init.stdout"
 
-    - name: Terraform apply (pool, networks, bastion VM)
+    - name: OpenTofu apply (pool, networks, bastion VM)
       ansible.builtin.command:
-        cmd: terraform apply -auto-approve -input=false
+        cmd: tofu apply -auto-approve -input=false
         chdir: "{{ sno_tf_dir }}"
       register: tf_apply
       changed_when: "'Apply complete!' in tf_apply.stdout"
 
-    - name: Read bastion IP from the Terraform output
+    - name: Read bastion IP from the OpenTofu output
       ansible.builtin.command:
-        cmd: terraform output -raw bastion_ip
+        cmd: tofu output -raw bastion_ip
         chdir: "{{ sno_tf_dir }}"
       register: tf_bastion_ip
       changed_when: false

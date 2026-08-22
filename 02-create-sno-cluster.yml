@@ -28,15 +28,15 @@
           openshift-install ({{ sno_installer_path }}):
           {{ 'ok' if installer_stat.stat.exists else 'MISSING' }}
 
-    - name: Generate master Terraform manifest
+    - name: Generate master OpenTofu manifest
       ansible.builtin.template:
         src: templates/master.tf.j2
         dest: "{{ sno_tf_dir }}/{{ sno_prefix }}_cluster_master0.tf"
         mode: '0644'
 
-    - name: Remove SNO master domain from terraform state if present (stale from prior run)
+    - name: Remove SNO master domain from OpenTofu state if present (stale from prior run)
       ansible.builtin.command:
-        cmd: terraform state rm libvirt_domain.{{ sno_prefix }}_master0
+        cmd: tofu state rm libvirt_domain.{{ sno_prefix }}_master0
         chdir: "{{ sno_tf_dir }}"
       failed_when: false
       changed_when: false
@@ -47,9 +47,9 @@
       failed_when: false
       changed_when: false
 
-    - name: Terraform apply (create SNO master VM)
+    - name: OpenTofu apply (create SNO master VM)
       ansible.builtin.command:
-        cmd: terraform apply -auto-approve -input=false
+        cmd: tofu apply -auto-approve -input=false
         chdir: "{{ sno_tf_dir }}"
       register: tf_apply
       changed_when: "'Apply complete!' in tf_apply.stdout"
@@ -75,9 +75,9 @@
       poll: 30
       changed_when: true
 
-    - name: Read bastion IP from the Terraform output
+    - name: Read bastion IP from the OpenTofu output
       ansible.builtin.command:
-        cmd: terraform output -raw bastion_ip
+        cmd: tofu output -raw bastion_ip
         chdir: "{{ sno_tf_dir }}"
       register: tf_bastion_ip
       changed_when: false
