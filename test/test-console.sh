@@ -137,8 +137,12 @@ echo ""
 echo "[ dnsmasq (03-expose-console.yml) ]"
 if systemctl is-active --quiet dnsmasq 2>/dev/null; then
     ok "dnsmasq is active"
-    if [[ -f /etc/dnsmasq.d/sno.conf ]]; then
-        ok "SNO wildcard DNS config exists"
+    # Per-cluster since the multi-cluster work: 03-expose-console.yml writes
+    # sno-<cluster>.<domain>.conf and actively removes the old shared
+    # sno.conf, so checking the latter always failed.
+    DNSMASQ_CONF="/etc/dnsmasq.d/sno-${CLUSTER_NAME}.${BASE_DOMAIN}.conf"
+    if [[ -f "$DNSMASQ_CONF" ]]; then
+        ok "SNO wildcard DNS config exists: $DNSMASQ_CONF"
         # Verify wildcard resolution via dnsmasq directly
         WILDCARD_TEST="test-route-check.apps.${CLUSTER_NAME}.${BASE_DOMAIN}"
         DIG_RESULT=$(dig +short "@${HOST_IP}" "$WILDCARD_TEST" 2>/dev/null) || true
@@ -150,7 +154,7 @@ if systemctl is-active --quiet dnsmasq 2>/dev/null; then
             info "dig not available or dnsmasq not reachable — wildcard check skipped"
         fi
     else
-        fail "SNO wildcard DNS config /etc/dnsmasq.d/sno.conf missing"
+        fail "SNO wildcard DNS config $DNSMASQ_CONF missing"
     fi
 else
     info "dnsmasq not running — LAN clients must use /etc/hosts (run 03-expose-console.yml for wildcard DNS)"
