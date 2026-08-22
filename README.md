@@ -5,6 +5,32 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![GitHub last commit](https://img.shields.io/github/last-commit/nogunix/sno-auto-builder)
 
+**Full OpenShift on a 32 GB mini PC — not CRC.**
+Deploy a production-like SNO cluster with all operators enabled, proxy/air-gap testing, and proper DNS — in two `ansible-playbook` commands.
+
+### Quick Start
+
+```bash
+git clone https://github.com/nogunix/sno-auto-builder.git && cd sno-auto-builder
+vim vars.yml                                    # set pull secret path, OCP version, IPs
+ansible-galaxy collection install -r requirements.yml
+ansible-playbook 01-infra-bastion.yml           # bastion + Agent ISO       (~5 min)
+ansible-playbook 02-create-sno-cluster.yml      # boot SNO, wait for ready  (~90 min)
+```
+
+> **Need a pull secret?** Free Red Hat Developer account → [console.redhat.com/openshift/install/pull-secret](https://console.redhat.com/openshift/install/pull-secret)
+
+### Why not CRC (OpenShift Local)?
+
+| | CRC | sno-auto-builder |
+|---|---|---|
+| Cluster | Stripped-down, some operators disabled | **Full OCP** — all operators |
+| Proxy / air-gap testing | No | **Yes** (squid included) |
+| Network | Host-only | Bastion + DNS + HAProxy |
+| Target | Laptop (macOS/Win/Linux) | Mini PC / server (Linux + KVM) |
+
+---
+
 Automatically deploy **OpenShift Single Node (SNO)** on Fedora / RHEL / CentOS Stream / Ubuntu + libvirt using the **Agent-based installer**.
 
 Ansible drives the whole flow; **OpenTofu** provisions the libvirt objects (pool, networks, bastion VM, master VM).
@@ -14,10 +40,6 @@ Ansible drives the whole flow; **OpenTofu** provisions the libvirt objects (pool
 **SNO** is an OpenShift cluster topology that runs all control-plane components on a single master node.  
 **Bastion VM** hosts DNS, proxy, and load balancer services, and acts as the jump host for `oc` commands.
 
-> **Why this project?**  
-> Getting a full OCP cluster running locally is notoriously tricky — pull secret wrangling, DNS quirks, HAProxy config, Agent ISO generation, and KVM networking all need to line up perfectly.  
-> This project automates the entire stack end-to-end with two `ansible-playbook` commands, targeting a standard 32 GB mini PC.
->
 > **Use cases:**
 > - Testing Operators and custom workloads on a full OCP cluster
 > - Home lab with a production-like setup
@@ -389,19 +411,9 @@ The bastion VM (DNS, proxy, HAProxy, NFS, chrony) is lightweight and rarely need
 
 ## Comparison with OpenShift Local (CRC)
 
-[OpenShift Local](https://developers.redhat.com/products/openshift-local/overview) is the easiest way to run OpenShift on a laptop. This project targets a different use case:
+See the [comparison table at the top](#why-not-crc-openshift-local) for a side-by-side summary.
 
-| | OpenShift Local (CRC) | sno-auto-builder |
-|---|---|---|
-| Setup | `crc start` | 2 `ansible-playbook` commands |
-| Cluster | Stripped-down, some operators disabled | **Full OCP** — all operators enabled |
-| Network | Host-only | Bastion + DNS + proxy + HAProxy |
-| Proxy/air-gap testing | No | **Yes** (squid included) |
-| OS | macOS / Windows / Linux | Linux (libvirt/KVM) |
-| RAM | 10.5 GB+ | 32 GB+ |
-| Pull secret | Not required | Required |
-
-**Use this project if you need a production-like SNO environment** — edge deployment testing, proxy/air-gap scenarios, or validating configs before deploying on real hardware.
+[OpenShift Local](https://developers.redhat.com/products/openshift-local/overview) is the easiest way to run OpenShift on a laptop. **Use this project if you need a production-like SNO environment** — edge deployment testing, proxy/air-gap scenarios, or validating configs before deploying on real hardware.
 
 ## Installation Method: Agent-based Installer
 
