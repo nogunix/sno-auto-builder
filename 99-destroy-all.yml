@@ -6,7 +6,7 @@
     - vars.yml
 
   tasks:
-    # Before terraform destroy: the pod holds a kubeconfig for a cluster that is
+    # Before tofu destroy: the pod holds a kubeconfig for a cluster that is
     # about to disappear, and podman keeps both pod and secret across reboots.
     - name: Remove the openshift-mcp-server pod
       containers.podman.podman_pod:
@@ -80,7 +80,7 @@
 
     # Marker must stay byte-identical to what 04-deploy-mcp-server.yml writes.
     # The cluster-side ServiceAccount and its bindings need no cleanup here —
-    # terraform destroy takes the whole cluster with them.
+    # tofu destroy takes the whole cluster with them.
     - name: Remove SNO MCP monitoring route entries from /etc/hosts
       ansible.builtin.blockinfile:
         path: /etc/hosts
