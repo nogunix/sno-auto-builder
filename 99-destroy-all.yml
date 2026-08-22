@@ -11,20 +11,20 @@
         path: "{{ sno_tf_dir }}"
       register: tf_dir_stat
 
-    - name: Terraform destroy (remove all VMs, networks, pool)
+    - name: OpenTofu destroy (remove all VMs, networks, pool)
       ansible.builtin.command:
-        cmd: terraform destroy -auto-approve
+        cmd: tofu destroy -auto-approve
         chdir: "{{ sno_tf_dir }}"
       when: tf_dir_stat.stat.exists
       register: tf_destroy
       failed_when: false
       changed_when: tf_destroy.rc == 0 and 'Destroy complete!' in tf_destroy.stdout
 
-    # Best-effort sweep for objects terraform destroy did not remove (state lost,
+    # Best-effort sweep for objects tofu destroy did not remove (state lost,
     # created out of band, or already partially torn down). Every one of these
     # is expected to fail when the object is simply not there, hence
     # failed_when: false — the following tasks do not depend on them.
-    - name: Remove libvirt objects left behind by terraform destroy
+    - name: Remove libvirt objects left behind by tofu destroy
       ansible.builtin.command:
         cmd: "virsh -c qemu:///system {{ item }}"
       loop:

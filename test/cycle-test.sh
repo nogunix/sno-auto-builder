@@ -136,7 +136,7 @@ preflight() {
     local rc=0
     echo "=== Preflight ==="
 
-    for t in ansible-playbook terraform virsh sshpass curl; do
+    for t in ansible-playbook tofu virsh sshpass curl; do
         if command -v "$t" >/dev/null 2>&1; then
             echo "  [OK]   $t"
         else

@@ -34,14 +34,14 @@ echo ""
 # --- Bastion IP ---
 echo "[ Bastion ]"
 # Same source as the playbooks: the bastion_ip output from 01-infra-bastion.yml.
-# `terraform output -raw` prints a warning to stdout and still exits 0 when the
+# `tofu output -raw` prints a warning to stdout and still exits 0 when the
 # output is absent, so validate the shape instead of trusting the exit code.
-BASTION_IP=$(terraform -chdir="$TF_DIR" output -raw bastion_ip 2>/dev/null) || true
+BASTION_IP=$(tofu -chdir="$TF_DIR" output -raw bastion_ip 2>/dev/null) || true
 if [[ ! "$BASTION_IP" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
     fail "No bastion_ip output in $TF_DIR — run 01-infra-bastion.yml first"
     exit 1
 fi
-ok "Bastion IP from Terraform output: $BASTION_IP"
+ok "Bastion IP from OpenTofu output: $BASTION_IP"
 
 # Run oc as the bastion user (kubeconfig lives at ~/.kube/config for that user).
 # -i gives a login shell so /usr/local/bin (oc, openshift-install) is on PATH.
