@@ -473,6 +473,3 @@ VIPs on the bastion cluster NIC: 192.168.10.100 (API) · 192.168.10.101 (ingress
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
-
-This is my personal project.
-It is created and maintained in my personal capacity, and has no relation to my employer's business or confidential information.
