@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![GitHub last commit](https://img.shields.io/github/last-commit/nogunix/sno-auto-builder)
 
-**Full OpenShift on a mini PC — not CRC.**
+**Full OpenShift on a Linux mini PC — not CRC.**
 Deploy a production-like SNO cluster with all operators enabled, proxy/air-gap testing, and proper DNS — in two `ansible-playbook` commands.
 
 ### Quick Start
@@ -46,7 +46,7 @@ Ansible drives the whole flow; **OpenTofu** provisions the libvirt objects (pool
 
 ## Host Requirements
 
-Runs comfortably on a mini PC or spare workstation:
+Runs comfortably on a Linux mini PC or spare workstation:
 
 | Resource | Minimum | Notes |
 |---|---|---|
