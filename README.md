@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![GitHub last commit](https://img.shields.io/github/last-commit/nogunix/sno-auto-builder)
 
-**Full OpenShift on a 32 GB mini PC — not CRC.**
+**Full OpenShift on a mini PC — not CRC.**
 Deploy a production-like SNO cluster with all operators enabled, proxy/air-gap testing, and proper DNS — in two `ansible-playbook` commands.
 
 ### Quick Start
@@ -46,12 +46,12 @@ Ansible drives the whole flow; **OpenTofu** provisions the libvirt objects (pool
 
 ## Host Requirements
 
-Designed to run on a mini PC with **32 GB RAM**:
+Runs comfortably on a mini PC or spare workstation:
 
-| Resource | Required | Notes |
+| Resource | Minimum | Notes |
 |---|---|---|
 | CPU | 10 cores / threads | Hardware virtualization (VT-x / AMD-V) required |
-| RAM | 32 GB | 24 GB for VMs + 8 GB host OS |
+| RAM | 28 GB | 24 GB for VMs (defaults) + host OS headroom |
 | Disk | 256 GB free | 140 GB for VM images + host OS |
 
 **VM breakdown (default `vars.yml`):**
@@ -403,7 +403,7 @@ If you have more resources, increase the SNO master allocation in `vars.yml` for
 
 ```yaml
 sno_master_vcpu: 16       # more vCPUs for heavier workloads
-sno_master_memory: 32     # more RAM for running more pods
+sno_master_memory: 32     # GB — more RAM for running more pods
 sno_master_disk_size: 200 # more disk for persistent volumes
 ```
 
