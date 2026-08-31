@@ -6,7 +6,7 @@
 ![GitHub last commit](https://img.shields.io/github/last-commit/nogunix/sno-auto-builder)
 
 **Full OpenShift on a Linux mini PC — not CRC.**
-Deploy a production-like SNO cluster with all operators enabled, proxy/air-gap testing, and proper DNS — in two `ansible-playbook` commands.
+Deploy a production-like SNO cluster with proxy/air-gap testing and proper DNS — in two `ansible-playbook` commands.
 
 ### Quick Start
 
@@ -24,7 +24,7 @@ ansible-playbook 02-create-sno-cluster.yml      # boot SNO, wait for ready  (~90
 
 | | CRC | sno-auto-builder |
 |---|---|---|
-| Cluster | Stripped-down, some operators disabled | **Full OCP** — all operators |
+| Cluster | Stripped-down, some operators disabled | **Full OCP** |
 | Proxy / air-gap testing | No | **Yes** (squid included) |
 | Network | Host-only | Bastion + DNS + HAProxy |
 | Target | Laptop (macOS/Win/Linux) | Mini PC / server (Linux + KVM) |
