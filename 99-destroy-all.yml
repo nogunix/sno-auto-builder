@@ -203,11 +203,10 @@
     # Symmetric with the nginx teardown above. Restarting here instead leaves an
     # enabled dnsmasq with no /etc/dnsmasq.d/sno-*.conf at all: it loses the
     # listen-address that confined it to the LAN IP, falls back to the
-    # local-service=host default, binds loopback only and logs "failed to
-    # create listening socket for 127.0.0.1: Address already in use" while
-    # serving nothing. Verified by hand -- it does not collide with the
-    # per-network dnsmasq instances libvirt runs, so this is cleanup, not a
-    # crash fix.
+    # local-service=host default in dnsmasq.conf, and comes back bound to
+    # loopback only, serving nothing. Verified by hand -- it starts cleanly and
+    # does not collide with the per-network dnsmasq instances libvirt runs, so
+    # this is cleanup of a pointless unit, not a crash fix.
     - name: Stop and disable dnsmasq (no backends left)
       ansible.builtin.systemd_service:
         name: dnsmasq
