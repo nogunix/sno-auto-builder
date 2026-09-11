@@ -198,8 +198,29 @@
         state: restarted
       become: true
       failed_when: false
+      when: (_remaining_backends.matched | default(0)) > 0
 
-    - name: Close DNS service in firewalld
+    # Symmetric with the nginx teardown above. Restarting here instead leaves an
+    # enabled dnsmasq with no /etc/dnsmasq.d/sno-*.conf at all: it loses the
+    # listen-address that confined it to the LAN IP, falls back to the
+    # local-service=host default, binds loopback only and logs "failed to
+    # create listening socket for 127.0.0.1: Address already in use" while
+    # serving nothing. Verified by hand -- it does not collide with the
+    # per-network dnsmasq instances libvirt runs, so this is cleanup, not a
+    # crash fix.
+    - name: Stop and disable dnsmasq (no backends left)
+      ansible.builtin.systemd_service:
+        name: dnsmasq
+        enabled: false
+        state: stopped
+      become: true
+      failed_when: false
+      when: (_remaining_backends.matched | default(0)) == 0
+
+    # Backend-aware, exactly like the port 80/443/6443 close above: dnsmasq
+    # serves every cluster registered on this host, so closing DNS while
+    # another cluster is still registered cuts off LAN resolution for it.
+    - name: Close DNS service in firewalld (no backends left)
       ansible.posix.firewalld:
         service: dns
         permanent: true
@@ -207,3 +228,4 @@
         immediate: true
       become: true
       failed_when: false
+      when: (_remaining_backends.matched | default(0)) == 0
