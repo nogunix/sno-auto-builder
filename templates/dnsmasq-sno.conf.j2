@@ -1,7 +1,18 @@
 # Wildcard DNS for {{ sno_cluster_name }}.{{ sno_base_domain }}
 # Managed by 03-expose-console.yml — removed by 99-destroy-all.yml
 listen-address={{ sno_host_ip }}
-bind-interfaces
+# bind-dynamic, not bind-interfaces: the host's LAN address is usually a DHCP
+# lease, so at boot dnsmasq.service (After=network.target only) starts before
+# the address exists and bind-interfaces aborts with "Cannot assign requested
+# address". bind-dynamic binds the address whenever it appears, and still
+# avoids the port 53 conflict with systemd-resolved on 127.0.0.53.
+bind-dynamic
+# no-hosts is load-bearing: without it dnsmasq also serves this host's
+# /etc/hosts, whose entries take precedence over the address= lines below.
+# 02 writes api/api-int -> sno_api_vip and 04 writes the monitoring routes ->
+# sno_ingress_vip there; both are libvirt NAT addresses that LAN clients cannot
+# reach, so handing them out breaks exactly the names this file exists to fix.
+no-hosts
 address=/apps.{{ sno_cluster_name }}.{{ sno_base_domain }}/{{ sno_host_ip }}
 address=/api.{{ sno_cluster_name }}.{{ sno_base_domain }}/{{ sno_host_ip }}
 address=/api-int.{{ sno_cluster_name }}.{{ sno_base_domain }}/{{ sno_host_ip }}
