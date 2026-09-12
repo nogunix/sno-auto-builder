@@ -225,7 +225,7 @@
 
     - name: Download openshift-install tarball
       ansible.builtin.get_url:
-        url: "https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ sno_cluster_version }}/openshift-install-linux.tar.gz"
+        url: "{{ sno_installer_url }}"
         dest: "{{ sno_tf_dir }}/openshift-install-linux.tar.gz"
         mode: '0644'
 

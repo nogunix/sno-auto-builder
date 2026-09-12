@@ -63,6 +63,9 @@ sno_ingress_vip: "192.168.10.101"
 
 # Paths used for ISO generation on localhost and cluster monitoring (set by 01-infra-bastion.yml)
 sno_installer_path: "{{ sno_tf_dir }}/openshift-install"
+# Where 01-infra-bastion.yml fetches the installer tarball from. Override to
+# point at an internal mirror (or, in test/mock-run.sh, a local file:// copy).
+sno_installer_url: "https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ sno_cluster_version }}/openshift-install-linux.tar.gz"
 sno_manifests_dir: "{{ sno_tf_dir }}/generated/{{ sno_cluster_name }}"
 
 # openshift-mcp-server — used by 04-deploy-mcp-server.yml

@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Mock `tofu` for test/mock-run.sh. Emits the stdout the playbooks parse in
+# their changed_when/register expressions, so 01 and 02 run end to end without
+# libvirt. Never touches real state.
+set -u
+
+log() { echo "[mock-tofu] $*" >> "${MOCK_LOG:-/dev/null}"; }
+log "argv: $*"
+
+case "${1:-}" in
+  init)
+    echo 'Initializing the backend...'
+    echo 'OpenTofu has been successfully initialized!'
+    ;;
+  apply)
+    echo 'libvirt_pool.default: Creating...'
+    echo 'Apply complete! Resources: 4 added, 0 changed, 0 destroyed.'
+    echo ''
+    echo 'Outputs:'
+    echo 'bastion_ip = "'"${MOCK_BASTION_IP:-127.0.0.1}"'"'
+    ;;
+  destroy)
+    echo 'Destroy complete! Resources: 4 destroyed.'
+    ;;
+  state)
+    # `tofu state rm ...` on a fresh state: the playbooks wrap this in
+    # failed_when:false, so a non-zero exit is the realistic path.
+    echo "Invalid target \"${3:-}\"" >&2
+    exit 1
+    ;;
+  output)
+    if [ "${MOCK_TOFU_OUTPUT_MISSING:-0}" = "1" ]; then
+      # Reproduces the documented gotcha: a missing output makes real tofu
+      # print a warning *to stdout* and still exit 0. Callers must validate
+      # the IPv4 shape rather than trust the exit code.
+      echo '╷'
+      echo '│ Warning: No outputs found'
+      echo '│'
+      echo '│ The state file either has no outputs defined, or all the defined'
+      echo '│ outputs are empty.'
+      echo '╵'
+      exit 0
+    fi
+    echo -n "${MOCK_BASTION_IP:-127.0.0.1}"
+    ;;
+  *)
+    echo "[mock-tofu] unhandled subcommand: ${1:-}" >&2
+    exit 64
+    ;;
+esac

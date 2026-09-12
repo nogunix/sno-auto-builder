@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Mock `podman` for test/mock-run-host.sh. 04 deploys the MCP pod with
+# `podman kube play -`, which would otherwise need nested containers and a
+# multi-hundred-MB image pull. Drain stdin so the pipeline's `cat` does not
+# see EPIPE, then report success.
+set -u
+echo "[mock-podman] $*" >> "${MOCK_LOG:-/dev/null}"
+case "${1:-} ${2:-}" in
+  "kube play")
+    cat > "${MOCK_KUBE_PLAY_CAPTURE:-/dev/null}"
+    echo 'Pod:'
+    echo 'openshift-mcp-server'
+    ;;
+  *)
+    echo "[mock-podman] unhandled: $*" >&2
+    exit 64
+    ;;
+esac

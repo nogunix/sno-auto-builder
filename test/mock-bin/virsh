@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Mock `virsh` for test/mock-run.sh. Both call sites in the playbooks are
+# best-effort cleanups wrapped in failed_when:false, so "domain not found" is
+# the realistic answer on a clean host.
+set -u
+echo "[mock-virsh] $*" >> "${MOCK_LOG:-/dev/null}"
+echo "error: failed to get domain '${*: -1}'" >&2
+exit 1

@@ -60,7 +60,7 @@ Reproduce the full CI suite locally before pushing (mirrors `lint.yml` + `test.y
 ansible-lint --profile production
 
 # 1b. Shell scripts (not in CI, but keep them clean)
-shellcheck test/test-console.sh test/cycle-test.sh
+shellcheck test/test-console.sh test/cycle-test.sh test/mock-run.sh test/mock-run-host.sh
 
 # 2. Syntax-check all playbooks
 ansible-playbook --syntax-check -i test/inventory \
@@ -72,6 +72,41 @@ cd /tmp/sno-rendered && tofu init -backend=false && tofu validate && tofu fmt -c
 ```
 
 `test-render.yml` (repo root) renders `infra.tf.j2`, `bastion.tf.j2`, `master.tf.j2`, `install-config.yaml.j2`, and `agent-config.yaml.j2` — no libvirt or VMs needed, so this is safe to run anywhere.
+
+## Mocked end-to-end run (task coverage)
+
+`test/mock-run.sh` runs `01` and `02` to completion against shims in `test/mock-bin/` (`tofu`, `virsh`, `semanage`, `restorecon`, `openshift-install`). It exists because **`--check` is nearly useless here**: every `command` task is skipped in check mode, so the facts the playbooks register come back empty and the run dies at the first assert — `01` reaches 8 of its 35 tasks, `02` reaches 3 of 16. With the shims on `PATH` the registers are real, `when:` branches evaluate, and `get_url`/`unarchive` actually run against a `file://` tarball built from the fake installer.
+
+```bash
+podman run --rm -v "$PWD":/repo:Z -w /repo fedora:44 bash -c \
+  'dnf install -y ansible-core tar openssh-server openssh-clients sshpass && \
+   ansible-galaxy collection install -r requirements.yml && ./test/mock-run.sh'
+```
+
+- **It refuses to run outside a container or CI** unless given `--force`: `02` appends to `/etc/hosts` and the bastion plays create a local user. Keep that guard.
+- `HOME` is redirected into the scratch workspace so the fake pull secret never lands in the caller's home directory.
+- The script stands up a real `sshd` on `127.0.0.1:22` and a local `redhat` account so the `hosts: bastion_server` plays run; the mock `tofu output -raw bastion_ip` returns `127.0.0.1` to match. Without a usable `sshd` it falls back to `--limit localhost` plus a bare TCP listener on port 22 (which `wait_for` still needs) and the bastion plays are skipped.
+- It pre-creates `/etc/helper_node_setup_info` so the bastion block takes its documented idempotency-guard path instead of actually running `helper_node.sh`.
+- The last phase is a **negative test**: `MOCK_TOFU_OUTPUT_MISSING=1` makes the mock reproduce the documented gotcha — a missing output warns on *stdout* and exits 0 — and the script asserts that `01` fails at `Assert the bastion received a DHCP lease`. That is the regression test for the IPv4-shape validation; check mode can never reach it.
+- `sno_installer_url` (`vars.yml`) exists so this run can point `get_url` at a local file. It also lets a real deployment use an internal mirror.
+
+`test/mock-run-host.sh` is the companion for `03`, `04` and `99`. Those need more than PATH shims — `03`/`99` drive systemd units and firewalld, and `04` talks to a Kubernetes API — so it runs inside the systemd image built from `test/Containerfile.mock-host`:
+
+```bash
+podman build -t sno-mock-host -f test/Containerfile.mock-host .
+podman run -d --name sno-mock-host --systemd=always --cap-add=NET_ADMIN,NET_RAW \
+  -v "$PWD":/repo:Z sno-mock-host
+podman exec -w /repo sno-mock-host ansible-galaxy collection install -r requirements.yml
+podman exec -w /repo sno-mock-host ./test/mock-run-host.sh
+```
+
+- **nginx, dnsmasq, firewalld and systemd are real** in that container — that is the point, since `03` is mostly about whether the generated nginx config loads.
+- **Cluster access is faked by shadowing collections, not by editing the playbooks.** `test/mock-collections/` holds test doubles for `kubernetes.core.k8s`/`k8s_info` and `containers.podman.podman_pod`/`podman_pod_info`/`podman_secret`, and `ANSIBLE_COLLECTIONS_PATH` puts that directory ahead of the real ones. Note that variable *replaces* the default search path rather than extending it, so the script has to read the real paths out of `ansible-config dump` and append them — drop that and `03`/`99` lose `ansible.posix.firewalld`.
+- `04` runs **before** `03` deliberately: its verification stubs listen on 443, which `03` then hands to the nginx stream proxy.
+- The script generates a throwaway CA, signs a server certificate for the three monitoring-route names, and embeds that CA in the fake kubeconfig — so `04`'s `ca_path` verification is exercised for real rather than skipped. The CA needs explicit `basicConstraints`/`keyUsage` extensions or Python rejects it with `CA cert does not include key usage extension`.
+- `sno_ingress_vip` is overridden to `127.0.0.1` so the `/etc/hosts` block `04` writes points at those stubs.
+- `MOCK_LOG` lives **outside** `WORKDIR`, because `WORKDIR` is `sno_base_dir` and `99` deletes it — same reasoning as `test/cycle-test.sh`'s log directory.
+- After `99` the script asserts that both `/etc/hosts` marker blocks, the nginx backend JSON and the dnsmasq config are gone. That is the executable form of the "markers must stay byte-identical" rule below; a rename in `03`/`04` without the matching change in `99` fails here.
 
 ## Verifying a live cluster
 

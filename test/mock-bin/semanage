@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Mock `semanage` for test/mock-run.sh. Only reached when SELinux is enabled.
+set -u
+echo "[mock-semanage] $*" >> "${MOCK_LOG:-/dev/null}"
+if [ "${MOCK_SEMANAGE_ALREADY_DEFINED:-0}" = "1" ]; then
+  echo "ValueError: File context for ${*: -1} already defined" >&2
+  exit 1
+fi
+exit 0

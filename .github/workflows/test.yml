@@ -79,17 +79,6 @@ jobs:
           ANSIBLE_CALLBACKS_ENABLED: ansible.posix.profile_tasks,coverage_reporter
           ANSIBLE_COVERAGE_OUTPUT: coverage.xml
 
-      - name: Dry-run production playbooks in check mode for additional coverage
-        run: |
-          for pb in 01-infra-bastion.yml 02-create-sno-cluster.yml \
-                    03-expose-console.yml 04-deploy-mcp-server.yml \
-                    99-destroy-all.yml; do
-            ansible-playbook --check -i test/inventory "$pb" || true
-          done
-        env:
-          ANSIBLE_CALLBACKS_ENABLED: ansible.posix.profile_tasks,coverage_reporter
-          ANSIBLE_COVERAGE_OUTPUT: coverage.xml
-
       - name: tofu init
         run: tofu -chdir=/tmp/sno-rendered init -backend=false
 
@@ -98,6 +87,77 @@ jobs:
 
       - name: tofu fmt
         run: tofu -chdir=/tmp/sno-rendered fmt -check -diff
+
+      - name: Upload coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
+          flags: ansible
+          fail_ci_if_error: false
+
+  mock-run:
+    name: Mocked end-to-end run (01 + 02)
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:44
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install dependencies
+        run: dnf install -y ansible-core git tar openssh-server openssh-clients sshpass
+
+      - name: Install Ansible collections
+        run: ansible-galaxy collection install -r requirements.yml
+
+      - name: Run 01 and 02 against mocked tofu/virsh/openshift-install
+        run: ./test/mock-run.sh
+        env:
+          ANSIBLE_COVERAGE_OUTPUT: coverage.xml
+
+      - name: Upload coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
+          flags: ansible
+          fail_ci_if_error: false
+
+  mock-run-host:
+    name: Mocked host run (03 + 04 + 99)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # 03 and 99 drive systemd units and firewalld, so this one needs a real
+      # init. A GitHub container job cannot provide that (the runner replaces
+      # the entrypoint), hence docker run from the host runner instead.
+      - name: Build the systemd test image
+        run: docker build -t sno-mock-host -f test/Containerfile.mock-host .
+
+      - name: Boot the test container
+        run: |
+          docker run -d --name sno-mock-host --privileged --cgroupns=host \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw --tmpfs /run --tmpfs /run/lock \
+            -v "$PWD":/repo sno-mock-host
+          for _ in $(seq 60); do
+            state=$(docker exec sno-mock-host systemctl is-system-running 2>/dev/null || true)
+            case "$state" in running|degraded) exit 0 ;; esac
+            sleep 2
+          done
+          echo "systemd did not finish booting" >&2
+          docker logs sno-mock-host
+          exit 1
+
+      - name: Install Ansible collections
+        run: docker exec -w /repo sno-mock-host ansible-galaxy collection install -r requirements.yml
+
+      - name: Run 03, 04 and 99 against mocked cluster access
+        run: |
+          docker exec -w /repo -e ANSIBLE_COVERAGE_OUTPUT=/repo/coverage.xml \
+            sno-mock-host ./test/mock-run-host.sh
 
       - name: Upload coverage to Codecov
         if: always()

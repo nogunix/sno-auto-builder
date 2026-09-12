@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Mock `openshift-install` for test/mock-run.sh. Packed into a tarball that
+# 01 fetches over file:// and unpacks, so get_url/unarchive run for real.
+set -u
+echo "[mock-openshift-install] $*" >> "${MOCK_LOG:-/dev/null}"
+
+dir=""
+prev=""
+for arg in "$@"; do
+  [ "$prev" = "--dir" ] && dir="$arg"
+  prev="$arg"
+done
+
+case "${1:-} ${2:-} ${3:-}" in
+  "agent create image")
+    [ -n "$dir" ] || { echo "missing --dir" >&2; exit 1; }
+    mkdir -p "$dir/auth"
+    # An ISO large enough to look real to stat, small enough to stay cheap.
+    head -c 1048576 /dev/zero > "$dir/agent.x86_64.iso"
+    cat > "$dir/auth/kubeconfig" <<'KUBECONFIG'
+apiVersion: v1
+kind: Config
+clusters:
+  - name: mock
+    cluster:
+      server: https://api.ocp4.example.com:6443
+contexts:
+  - name: admin
+    context: {cluster: mock, user: admin}
+current-context: admin
+users:
+  - name: admin
+    user: {token: mock-token}
+KUBECONFIG
+    echo "mock-kubeadmin-password" > "$dir/auth/kubeadmin-password"
+    echo "INFO Generated agent image in $dir"
+    ;;
+  "agent wait-for bootstrap-complete")
+    echo 'INFO Bootstrap Kubernetes API is now available'
+    echo 'INFO cluster bootstrap is complete'
+    ;;
+  "agent wait-for install-complete")
+    echo 'INFO Install complete!'
+    echo 'INFO Login to the console with user: "kubeadmin"'
+    ;;
+  "version  ")
+    echo 'openshift-install 4.99.0-mock'
+    ;;
+  *)
+    echo "[mock-openshift-install] unhandled: $*" >&2
+    exit 64
+    ;;
+esac

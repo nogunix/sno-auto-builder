@@ -1,0 +1,28 @@
+# Test-only image for test/mock-run-host.sh.
+#
+# 03/04/99 drive systemd units (nginx, dnsmasq), firewalld and SELinux tooling,
+# so unlike the 01/02 harness they need a real init. This image is never used
+# for a deployment — it only exists so those playbooks can run for coverage.
+FROM fedora:44
+
+RUN dnf install -y \
+        systemd \
+        ansible-core \
+        nginx nginx-mod-stream \
+        dnsmasq \
+        firewalld \
+        python3-firewall \
+        openssl \
+        podman python3-kubernetes \
+        procps-ng iproute \
+        git tar \
+    && dnf clean all \
+    # Nothing in here should try to bring up a login session, a network stack,
+    # or journald's audit socket; they only slow the boot and log noise.
+    && systemctl mask systemd-remount-fs.service \
+                     systemd-machine-id-commit.service \
+                     getty.target \
+                     console-getty.service
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/usr/lib/systemd/systemd", "--system"]
