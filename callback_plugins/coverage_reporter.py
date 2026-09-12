@@ -44,6 +44,14 @@ class CallbackModule(CallbackBase):
         self._project_root = os.path.dirname(os.path.abspath(playbook._file_name))
 
     def v2_playbook_on_task_start(self, task, is_conditional):
+        self._record(task)
+
+    # Handlers get their own callback; without this they are counted in the
+    # denominator but can never be marked as run.
+    def v2_playbook_on_handler_task_start(self, task):
+        self._record(task)
+
+    def _record(self, task):
         path_str = task.get_path()
         if ":" not in path_str:
             return
