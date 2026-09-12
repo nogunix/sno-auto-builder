@@ -73,8 +73,11 @@ jobs:
           echo '{"auths":{"fake.example.com":{"auth":"ZmFrZTpmYWtl"}}}' \
             > "$HOME/openshift-pull-secret/openshift-pull-secret.txt"
 
-      - name: Render templates
+      - name: Render templates with coverage
         run: ansible-playbook test-render.yml
+        env:
+          ANSIBLE_CALLBACKS_ENABLED: ansible.posix.profile_tasks,coverage_reporter
+          ANSIBLE_COVERAGE_OUTPUT: coverage.xml
 
       - name: tofu init
         run: tofu -chdir=/tmp/sno-rendered init -backend=false
@@ -84,3 +87,12 @@ jobs:
 
       - name: tofu fmt
         run: tofu -chdir=/tmp/sno-rendered fmt -check -diff
+
+      - name: Upload coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
+          flags: ansible
+          fail_ci_if_error: false
