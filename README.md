@@ -2,6 +2,7 @@
 
 [![Lint](https://github.com/nogunix/sno-auto-builder/actions/workflows/lint.yml/badge.svg)](https://github.com/nogunix/sno-auto-builder/actions/workflows/lint.yml)
 [![Test](https://github.com/nogunix/sno-auto-builder/actions/workflows/test.yml/badge.svg)](https://github.com/nogunix/sno-auto-builder/actions/workflows/test.yml)
+[![codecov](https://codecov.io/gh/nogunix/sno-auto-builder/graph/badge.svg)](https://codecov.io/gh/nogunix/sno-auto-builder)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![GitHub last commit](https://img.shields.io/github/last-commit/nogunix/sno-auto-builder)
 
