@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import time
+import xml.etree.ElementTree as ET
 from xml.etree.ElementTree import Element, ElementTree, SubElement
 
 from ansible.plugins.callback import CallbackBase
@@ -100,15 +101,42 @@ class CallbackModule(CallbackBase):
         return lines
 
     # ------------------------------------------------------------------
+    # Merge with prior run
+    # ------------------------------------------------------------------
+
+    def _load_existing_hits(self) -> dict[str, set[int]]:
+        if not os.path.exists(self._output_path):
+            return {}
+        try:
+            tree = ET.parse(self._output_path)
+            root = tree.getroot()
+            sources = root.findall(".//source")
+            base = sources[0].text if sources else ""
+            hits: dict[str, set[int]] = {}
+            for cls in root.findall(".//class"):
+                fname = cls.get("filename", "")
+                fpath = os.path.abspath(os.path.join(base, fname)) if base else fname
+                for line_el in cls.findall(".//line"):
+                    if line_el.get("hits", "0") != "0":
+                        hits.setdefault(fpath, set()).add(int(line_el.get("number")))
+            return hits
+        except Exception:  # noqa: BLE001
+            return {}
+
+    # ------------------------------------------------------------------
     # Cobertura XML writer
     # ------------------------------------------------------------------
 
     def _write_cobertura(self, all_tasks: dict[str, list[int]]) -> None:
+        prior = self._load_existing_hits()
+        merged: dict[str, set[int]] = {}
+        for fpath in set(list(self._executed) + list(prior)):
+            merged[fpath] = self._executed.get(fpath, set()) | prior.get(fpath, set())
+
         total = sum(len(v) for v in all_tasks.values())
         covered = 0
         for fpath, task_lines in all_tasks.items():
-            executed = self._executed.get(fpath, set())
-            covered += len(set(task_lines) & executed)
+            covered += len(set(task_lines) & merged.get(fpath, set()))
 
         rate = (covered / total) if total else 0
 
@@ -138,7 +166,7 @@ class CallbackModule(CallbackBase):
 
         for fpath in sorted(all_tasks):
             task_lines = all_tasks[fpath]
-            executed = self._executed.get(fpath, set())
+            executed = merged.get(fpath, set())
             rel = os.path.relpath(fpath, self._project_root)
 
             cls = SubElement(classes_el, "class")

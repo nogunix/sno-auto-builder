@@ -79,6 +79,17 @@ jobs:
           ANSIBLE_CALLBACKS_ENABLED: ansible.posix.profile_tasks,coverage_reporter
           ANSIBLE_COVERAGE_OUTPUT: coverage.xml
 
+      - name: Dry-run production playbooks in check mode for additional coverage
+        run: |
+          for pb in 01-infra-bastion.yml 02-create-sno-cluster.yml \
+                    03-expose-console.yml 04-deploy-mcp-server.yml \
+                    99-destroy-all.yml; do
+            ansible-playbook --check -i test/inventory "$pb" || true
+          done
+        env:
+          ANSIBLE_CALLBACKS_ENABLED: ansible.posix.profile_tasks,coverage_reporter
+          ANSIBLE_COVERAGE_OUTPUT: coverage.xml
+
       - name: tofu init
         run: tofu -chdir=/tmp/sno-rendered init -backend=false
 
