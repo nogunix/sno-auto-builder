@@ -1,0 +1,334 @@
+---
+- name: Validate variable computation and assertion logic
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - vars.yml
+  vars:
+    sno_base_dir: /tmp/sno-validate
+    sno_pool_dir: /tmp/sno-validate/pool
+    sno_tf_dir: /tmp/sno-validate/work
+    sno_manifests_dir: /tmp/sno-validate/generated/ocp4
+    sno_mcp_dir: /tmp/sno-validate/mcp
+
+  tasks:
+    - name: Create test working directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ sno_pool_dir }}"
+        - "{{ sno_tf_dir }}"
+        - "{{ sno_manifests_dir }}/openshift"
+        - "{{ sno_mcp_dir }}"
+        - /tmp/sno-validate/backends.d
+
+    # --- SSH keypair generation (mirrors 01) ---
+    - name: Generate SSH keypair for test
+      ansible.builtin.command:
+        cmd: "ssh-keygen -t ed25519 -N '' -f {{ sno_tf_dir }}/openshift_rsa"
+        creates: "{{ sno_tf_dir }}/openshift_rsa"
+
+    - name: Read SSH public key
+      ansible.builtin.slurp:
+        src: "{{ sno_tf_dir }}/openshift_rsa.pub"
+      register: _test_ssh_pubkey_b64
+
+    - name: Set SSH public key fact
+      ansible.builtin.set_fact:
+        _sno_ssh_pubkey: "{{ _test_ssh_pubkey_b64.content | b64decode | trim }}"
+
+    - name: Assert SSH key was read successfully
+      ansible.builtin.assert:
+        that:
+          - _sno_ssh_pubkey is match('^ssh-ed25519 ')
+        fail_msg: "SSH key format unexpected: {{ _sno_ssh_pubkey }}"
+
+    # --- Bastion IP validation (mirrors 01 + 02) ---
+    - name: Mock bastion IP from tofu output
+      ansible.builtin.set_fact:
+        sno_bastion_ip: "192.168.222.50"
+
+    - name: Assert bastion IP is a valid IPv4
+      ansible.builtin.assert:
+        that:
+          - sno_bastion_ip is match('^\d{1,3}(\.\d{1,3}){3}$')
+        fail_msg: "Invalid bastion IP: {{ sno_bastion_ip }}"
+
+    # --- Pull secret validation (mirrors 01) ---
+    - name: Verify pull secret exists
+      ansible.builtin.stat:
+        path: "{{ sno_pull_secret_path }}"
+      register: pull_secret_stat
+
+    - name: Assert the pull secret is present
+      ansible.builtin.assert:
+        that:
+          - pull_secret_stat.stat.exists
+        fail_msg: "Pull secret not found: {{ sno_pull_secret_path }}"
+
+    # --- Login script generation (mirrors 01) ---
+    - name: Generate login_bastion.sh
+      ansible.builtin.copy:
+        content: |
+          #!/bin/bash
+          sshpass -p {{ sno_bastion_password }} ssh {{ sno_bastion_user }}@{{ sno_bastion_ip }} \
+            -o LogLevel=ERROR -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$@"
+        dest: "{{ sno_tf_dir }}/{{ sno_prefix }}_login_bastion0.sh"
+        mode: "0700"
+      no_log: true
+
+    # --- ISO / installer prereq checks (mirrors 02) ---
+    - name: Create a mock agent ISO marker
+      ansible.builtin.file:
+        path: "{{ sno_tf_dir }}/{{ sno_cluster_os_image_name }}"
+        state: touch
+        mode: "0644"
+
+    - name: Verify agent ISO exists
+      ansible.builtin.stat:
+        path: "{{ sno_tf_dir }}/{{ sno_cluster_os_image_name }}"
+      register: iso_stat
+
+    - name: Create a mock openshift-install marker
+      ansible.builtin.file:
+        path: "{{ sno_tf_dir }}/openshift-install"
+        state: touch
+        mode: "0755"
+
+    - name: Verify openshift-install binary exists
+      ansible.builtin.stat:
+        path: "{{ sno_installer_path }}"
+      register: installer_stat
+
+    - name: Assert prerequisites are present
+      ansible.builtin.assert:
+        that:
+          - iso_stat.stat.exists
+          - installer_stat.stat.exists
+        fail_msg: "Missing prerequisites"
+
+    # --- MachineConfig generation (mirrors 01) ---
+    - name: Write composefs MachineConfig for OCP 4.22+
+      ansible.builtin.copy:
+        dest: "{{ sno_manifests_dir }}/openshift/99-master-composefs-module.yaml"
+        mode: "0644"
+        content: |
+          apiVersion: machineconfiguration.openshift.io/v1
+          kind: MachineConfig
+          metadata:
+            labels:
+              machineconfiguration.openshift.io/role: master
+            name: 99-master-composefs-module
+          spec:
+            config:
+              ignition:
+                version: 3.4.0
+
+    # --- Legacy file cleanup (mirrors 01) ---
+    - name: Remove legacy standalone .tf files
+      ansible.builtin.file:
+        path: "{{ sno_tf_dir }}/{{ item }}"
+        state: absent
+      loop:
+        - main.tf
+        - pool.tf
+        - default_network.tf
+        - "{{ sno_prefix }}_network.tf"
+        - "{{ sno_prefix }}_cluster_master0.tf"
+
+    # --- Backend discovery simulation (mirrors 03 + 99) ---
+    - name: Register mock backend definitions
+      ansible.builtin.copy:
+        dest: "/tmp/sno-validate/backends.d/{{ item.cluster }}.{{ item.domain }}.json"
+        content: "{{ item | to_nice_json }}\n"
+        mode: "0644"
+      loop:
+        - cluster: ocp4
+          domain: example.com
+          apps_domain: "apps.ocp4.example.com"
+          api_domain: "api.ocp4.example.com"
+          ingress_vip: "192.168.10.101"
+          api_vip: "192.168.10.100"
+        - cluster: ocp5
+          domain: lab.local
+          apps_domain: "apps.ocp5.lab.local"
+          api_domain: "api.ocp5.lab.local"
+          ingress_vip: "192.168.20.101"
+          api_vip: "192.168.20.100"
+
+    - name: Discover registered backends
+      ansible.builtin.find:
+        paths: /tmp/sno-validate/backends.d
+        patterns: "*.json"
+      register: _test_backend_files
+
+    - name: Read backend definitions
+      ansible.builtin.slurp:
+        src: "{{ item.path }}"
+      loop: "{{ _test_backend_files.files }}"
+      register: _test_backend_slurps
+
+    - name: Build backends list from discovered definitions
+      ansible.builtin.set_fact:
+        sno_all_backends: >-
+          {{ _test_backend_slurps.results
+             | map(attribute='content')
+             | map('b64decode')
+             | map('from_json')
+             | list }}
+
+    - name: Assert multi-cluster backend discovery works
+      ansible.builtin.assert:
+        that:
+          - sno_all_backends | length == 2
+          - >-
+            sno_all_backends | map(attribute='apps_domain') | list | sort
+            == ['apps.ocp4.example.com', 'apps.ocp5.lab.local']
+
+    - name: Render nginx-sno-stream.conf with multiple backends
+      ansible.builtin.template:
+        src: templates/nginx-sno-stream.conf.j2
+        dest: /tmp/sno-validate/nginx-sno-stream-multi.conf
+        mode: "0644"
+
+    # --- Mock kubeconfig transformation (mirrors 04) ---
+    - name: Create mock kubeconfig
+      ansible.builtin.copy:
+        dest: "{{ sno_mcp_dir }}/kubeconfig"
+        mode: "0600"
+        content: |
+          apiVersion: v1
+          kind: Config
+          clusters:
+            - cluster:
+                server: https://api.ocp4.example.com:6443
+                certificate-authority-data: dGVzdC1jYQ==
+              name: ocp4
+          contexts:
+            - context:
+                cluster: ocp4
+                user: admin
+              name: admin
+          current-context: admin
+          users:
+            - name: admin
+              user:
+                client-certificate-data: dGVzdC1jZXJ0
+                client-key-data: dGVzdC1rZXk=
+
+    - name: Read mock kubeconfig
+      ansible.builtin.slurp:
+        src: "{{ sno_mcp_dir }}/kubeconfig"
+      register: mcp_source_kubeconfig_raw
+
+    - name: Build kubeconfig with ServiceAccount token added
+      ansible.builtin.set_fact:
+        mcp_kubeconfig_body: >-
+          {{ mcp_source_kubeconfig_raw.content | b64decode | from_yaml
+             | combine({'users': mcp_users_with_token}, recursive=false)
+             | to_nice_yaml(indent=2) }}
+      vars:
+        mcp_token: "test-token-value-for-ci"
+        mcp_source_users: >-
+          {{ (mcp_source_kubeconfig_raw.content | b64decode | from_yaml)['users'] }}
+        mcp_users_with_token: >-
+          {{ mcp_source_users | map('combine',
+               [{'user': {'token': mcp_token}}], recursive=true) | list }}
+
+    - name: Assert kubeconfig transformation preserved structure and added token
+      ansible.builtin.assert:
+        that:
+          - (mcp_kubeconfig_body | from_yaml).users[0].user.token == 'test-token-value-for-ci'
+          - (mcp_kubeconfig_body | from_yaml).users[0].user['client-certificate-data'] is defined
+          - >-
+            (mcp_kubeconfig_body | from_yaml).clusters[0].cluster.server
+            == 'https://api.ocp4.example.com:6443'
+
+    - name: Write the kubeconfig Secret manifest
+      ansible.builtin.copy:
+        dest: "{{ sno_mcp_dir }}/secret.yaml"
+        content: |
+          ---
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: openshift-mcp-kubeconfig
+          type: Opaque
+          stringData:
+            config: |
+          {{ mcp_kubeconfig_body | indent(4, true) }}
+        mode: "0600"
+      register: mcp_secret_manifest
+      no_log: true
+
+    # --- Deploy decision logic (mirrors 04) ---
+    - name: Simulate pod-info check (no pod running)
+      ansible.builtin.set_fact:
+        mcp_pod_info:
+          pods: []
+        mcp_manifest:
+          changed: false
+
+    - name: Decide whether a redeploy is needed (no pod)
+      ansible.builtin.set_fact:
+        mcp_needs_deploy: >-
+          {{ mcp_manifest.changed or mcp_secret_manifest.changed
+             or (mcp_pod_info.pods | default([]) | length) == 0
+             or (mcp_pod_info.pods | default([{}]) | first).State
+                | default('') != 'Running' }}
+
+    - name: Assert deploy is needed when no pod exists
+      ansible.builtin.assert:
+        that:
+          - mcp_needs_deploy | bool
+        fail_msg: "Deploy should be needed when no pod is running"
+
+    - name: Simulate pod-info check (pod running, no changes)
+      ansible.builtin.set_fact:
+        mcp_pod_info:
+          pods:
+            - State: Running
+        mcp_secret_manifest:
+          changed: false
+
+    - name: Recalculate deploy decision (pod running, nothing changed)
+      ansible.builtin.set_fact:
+        mcp_needs_deploy: >-
+          {{ mcp_manifest.changed or mcp_secret_manifest.changed
+             or (mcp_pod_info.pods | default([]) | length) == 0
+             or (mcp_pod_info.pods | default([{}]) | first).State
+                | default('') != 'Running' }}
+
+    - name: Assert deploy is NOT needed when pod is running and nothing changed
+      ansible.builtin.assert:
+        that:
+          - not (mcp_needs_deploy | bool)
+        fail_msg: >-
+          Deploy should NOT be needed when pod is running and manifests unchanged
+
+    # --- /etc/hosts line validation (mirrors 02 + 03 + 04) ---
+    - name: Compose API hosts line
+      ansible.builtin.set_fact:
+        _test_api_hosts_line: >-
+          {{ sno_api_vip }} api.{{ sno_cluster_name }}.{{ sno_base_domain }}
+          api-int.{{ sno_cluster_name }}.{{ sno_base_domain }}
+
+    - name: Assert API hosts line is well-formed
+      ansible.builtin.assert:
+        that:
+          - _test_api_hosts_line is match('^\d+\.\d+\.\d+\.\d+ api\.')
+          - sno_cluster_name in _test_api_hosts_line
+          - sno_base_domain in _test_api_hosts_line
+
+    - name: Show validation summary
+      ansible.builtin.debug:
+        msg: "All validation checks passed — {{ sno_cluster_name }}.{{ sno_base_domain }}"
+
+    # --- Cleanup ---
+    - name: Remove test working directory
+      ansible.builtin.file:
+        path: /tmp/sno-validate
+        state: absent

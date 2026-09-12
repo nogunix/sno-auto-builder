@@ -68,3 +68,21 @@
         mode: "0644"
       vars:
         sno_host_ip: "192.168.20.1"
+
+    - name: Render helper_node.sh
+      ansible.builtin.template:
+        src: templates/helper_node.sh.j2
+        dest: /tmp/sno-rendered/helper_node.sh
+        mode: "0755"
+
+    - name: Render nginx.conf
+      ansible.builtin.template:
+        src: templates/nginx.conf.j2
+        dest: /tmp/sno-rendered/nginx.conf
+        mode: "0644"
+
+    - name: Render openshift-mcp-server-pod.yaml
+      ansible.builtin.template:
+        src: templates/openshift-mcp-server-pod.yaml.j2
+        dest: /tmp/sno-rendered/openshift-mcp-server-pod.yaml
+        mode: "0644"

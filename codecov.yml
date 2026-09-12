@@ -10,6 +10,5 @@ coverage:
 
 ignore:
   - "test/**"
-  - "test-render.yml"
   - ".github/**"
   - "callback_plugins/**"
