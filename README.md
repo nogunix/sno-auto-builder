@@ -211,13 +211,13 @@ cd ~/sno-lab/work/generated/ocp4
 
 Run the following playbook to expose the console to your home network via an nginx stream proxy on the host.
 
-> **RedHat-family hosts only.** This playbook uses `dnf`, `semanage`, SELinux booleans, `firewalld`, and the `/etc/nginx/stream.d` layout, so it runs on Fedora / RHEL / CentOS Stream. It asserts this up front and stops with a clear message elsewhere. On other distributions, proxy ports 80/443/6443 to the ingress and API VIPs by hand. Playbooks `01`, `02` and `99` are unaffected.
+> **RedHat-family hosts only.** This playbook uses `dnf`, `semanage`, SELinux booleans, `firewalld`, and the `/etc/nginx/stream.d` / `http.d` layout, so it runs on Fedora / RHEL / CentOS Stream. It asserts this up front and stops with a clear message elsewhere. On other distributions, proxy ports 80/443/6443 to the ingress and API VIPs by hand. Playbooks `01`, `02` and `99` are unaffected.
 
 ```bash
 ansible-playbook 03-expose-console.yml
 ```
 
-This installs nginx, configures SSL passthrough to the SNO ingress VIP, opens ports 80/443/6443 in firewalld, and sets up **dnsmasq wildcard DNS** so every `*.apps` Route resolves automatically for LAN clients.
+This installs nginx, configures SSL passthrough to the SNO ingress VIP (routed by SNI on 443/6443, and by `Host` header on plain-HTTP port 80, so several clusters can share one host), opens ports 80/443/6443 in firewalld, and sets up **dnsmasq wildcard DNS** so every `*.apps` Route resolves automatically for LAN clients.
 
 ### LAN client setup (recommended)
 
@@ -394,7 +394,7 @@ ansible-playbook 99-destroy-all.yml
 
 This runs `tofu destroy` and then sweeps up by hand: `virsh undefine` for
 anything the state no longer knows about, removal of `sno_base_dir`, the
-nginx console config, and the `/etc/hosts` entries the playbooks added. The
+nginx console config (rebuilt for any clusters that remain), and the `/etc/hosts` entries the playbooks added. The
 manual sweep matters because a lost or partial state file would otherwise
 leave orphaned domains and networks behind.
 

@@ -215,10 +215,12 @@ check_absent() {
 check_absent "SNO console proxy ($CLUSTER.$DOMAIN)"
 check_absent "SNO MCP monitoring routes ($CLUSTER.$DOMAIN)"
 for path in "/etc/nginx/stream.d/backends.d/$CLUSTER.$DOMAIN.json" \
+            /etc/nginx/stream.d/sno.conf \
+            /etc/nginx/http.d/sno.conf \
             "/etc/dnsmasq.d/sno-$CLUSTER.$DOMAIN.conf"; do
   if [ -e "$path" ]; then echo "!! left behind: $path" >&2; leaks=1; fi
 done
-[ "$leaks" = "0" ] && echo "    /etc/hosts, nginx backend and dnsmasq config all cleaned up" || rc=1
+[ "$leaks" = "0" ] && echo "    /etc/hosts, nginx backend/configs and dnsmasq config all cleaned up" || rc=1
 
 echo "==> mocked commands invoked:"
 sed 's/^/    /' "$MOCK_LOG"
