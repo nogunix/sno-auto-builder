@@ -1,0 +1,29 @@
+# Host-based HTTP reverse proxy for OpenShift clusters
+# Managed by 03-expose-console.yml — removed by 99-destroy-all.yml
+# Routes plain HTTP traffic based on the Host header, complementing
+# the SNI-based stream proxy that handles TLS (443) and API (6443).
+
+{% for b in sno_all_backends %}
+server {
+    listen 80;
+    server_name ~\.{{ b.apps_domain | replace('.', '\\.') }}$;
+
+    location / {
+        proxy_pass http://{{ b.ingress_vip }}:80;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}
+
+{% endfor %}
+server {
+    listen 80 default_server;
+
+    location / {
+        proxy_pass http://{{ sno_all_backends[0].ingress_vip }}:80;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}

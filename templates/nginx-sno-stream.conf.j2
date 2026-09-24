@@ -24,11 +24,6 @@ server {
 }
 
 server {
-    listen 80;
-    proxy_pass {{ sno_all_backends[0].ingress_vip }}:80;
-}
-
-server {
     listen 6443;
     ssl_preread on;
     proxy_pass $sno_api_backend;
