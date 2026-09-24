@@ -107,10 +107,25 @@
              | map('from_json')
              | list }}
 
-    - name: Deploy SNI stream proxy config
+    - name: Deploy SNI stream proxy config (TLS 443 + API 6443)
       ansible.builtin.template:
         src: templates/nginx-sno-stream.conf.j2
         dest: /etc/nginx/stream.d/sno.conf
+        mode: '0644'
+      become: true
+      notify: Reload nginx
+
+    - name: Create conf.d directory for HTTP virtual hosts
+      ansible.builtin.file:
+        path: /etc/nginx/conf.d
+        state: directory
+        mode: '0755'
+      become: true
+
+    - name: Deploy Host-based HTTP reverse proxy config (port 80)
+      ansible.builtin.template:
+        src: templates/nginx-sno-http.conf.j2
+        dest: /etc/nginx/conf.d/sno-http.conf
         mode: '0644'
       become: true
       notify: Reload nginx
