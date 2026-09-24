@@ -35,7 +35,7 @@ sno_bastion_password: "redhat"
 sno_bastion_vcpu: 2
 sno_bastion_memory: 4
 sno_bastion_disk_size: 20
-sno_bastion_os_image: "https://cloud.centos.org/centos/9-stream/x86_64/images/CentOS-Stream-GenericCloud-x86_64-9-latest.x86_64.qcow2"
+sno_bastion_os_image: "https://cloud.centos.org/centos/9-stream/x86_64/images/CentOS-Stream-GenericCloud-9-latest.x86_64.qcow2"
 sno_bastion_mac_mgmt: "52:54:00:a1:23:10"   # NIC on default_network (management, DHCP)
 sno_bastion_mac_sno: "52:54:00:26:a1:02"    # NIC on sno_network (cluster access, static)
 
