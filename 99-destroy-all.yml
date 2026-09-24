@@ -118,6 +118,27 @@
       become: true
       when: (_remaining_backends.matched | default(0)) > 0
 
+    # The templates below may be newer than the last 03 run on this host: an
+    # older nginx.conf has no http block, and the stream template no longer
+    # serves port 80, so rebuilding only the drop-ins would leave the remaining
+    # clusters without port 80. Bring nginx.conf and http.d up to date first.
+    - name: Deploy nginx.conf for the rebuilt config
+      ansible.builtin.template:
+        src: templates/nginx.conf.j2
+        dest: /etc/nginx/nginx.conf
+        mode: '0644'
+        backup: true
+      become: true
+      when: (_remaining_backends.matched | default(0)) > 0
+
+    - name: Create nginx http.d directory
+      ansible.builtin.file:
+        path: /etc/nginx/http.d
+        state: directory
+        mode: '0755'
+      become: true
+      when: (_remaining_backends.matched | default(0)) > 0
+
     - name: Rebuild nginx stream config with remaining backends
       ansible.builtin.template:
         src: templates/nginx-sno-stream.conf.j2
