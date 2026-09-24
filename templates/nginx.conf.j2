@@ -10,7 +10,9 @@ events {
 }
 
 http {
-    include /etc/nginx/conf.d/*.conf;
+    # Only this repo's drop-ins: /etc/nginx/conf.d is shared with other
+    # packages (php-fpm, nginx.org's default.conf, ...) and must not leak in.
+    include /etc/nginx/http.d/*.conf;
 }
 
 stream {

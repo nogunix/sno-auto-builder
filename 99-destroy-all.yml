@@ -118,10 +118,25 @@
       become: true
       when: (_remaining_backends.matched | default(0)) > 0
 
-    - name: Rebuild nginx config with remaining backends
+    - name: Rebuild nginx stream config with remaining backends
       ansible.builtin.template:
         src: templates/nginx-sno-stream.conf.j2
         dest: /etc/nginx/stream.d/sno.conf
+        mode: '0644'
+      become: true
+      vars:
+        sno_all_backends: >-
+          {{ _remaining_slurps.results
+             | map(attribute='content')
+             | map('b64decode')
+             | map('from_json')
+             | list }}
+      when: (_remaining_backends.matched | default(0)) > 0
+
+    - name: Rebuild nginx HTTP config with remaining backends
+      ansible.builtin.template:
+        src: templates/nginx-sno-http.conf.j2
+        dest: /etc/nginx/http.d/sno.conf
         mode: '0644'
       become: true
       vars:
@@ -141,7 +156,7 @@
       failed_when: false
       when: (_remaining_backends.matched | default(0)) > 0
 
-    - name: Remove nginx SNO stream config (no backends left)
+    - name: Remove nginx SNO stream and HTTP config (no backends left)
       ansible.builtin.file:
         path: "{{ item }}"
         state: absent
@@ -149,6 +164,7 @@
       loop:
         - /etc/nginx/stream.d/sno.conf
         - /etc/nginx/stream.d/backends.d
+        - /etc/nginx/http.d/sno.conf
       when: (_remaining_backends.matched | default(0)) == 0
 
     - name: Remove SNO stream block from nginx.conf
