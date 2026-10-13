@@ -67,6 +67,16 @@ mkdir -p "$WORKDIR"/{work,pool,dist,home}
 export MOCK_LOG="$WORKDIR/mock-commands.log"
 : > "$MOCK_LOG"
 
+# --- Collections -------------------------------------------------------------
+# The HOME redirect below hides ~/.ansible/collections, so pin the real search
+# path first. 01 statically imports tasks/mirror-registry.yml, and every module
+# in an imported file must resolve at parse time even when sno_disconnected is
+# false and the tasks are skipped — without this, ansible.posix.firewalld fails.
+_real_collections="$(ansible-config dump 2>/dev/null \
+  | sed -n 's/^COLLECTIONS_PATHS([^)]*) = \(.*\)$/\1/p' \
+  | tr -d "[]' " | tr ',' ':')"
+export ANSIBLE_COLLECTIONS_PATH="${_real_collections:-$HOME/.ansible/collections:/usr/share/ansible/collections}"
+
 # --- Fake pull secret --------------------------------------------------------
 # vars.yml resolves sno_pull_secret_path from $HOME, so point HOME at the
 # scratch tree rather than writing into the caller's home directory.
