@@ -441,7 +441,7 @@ tear down first.
 ```yaml
 # vars.yml
 sno_disconnected: true
-sno_cluster_version: "stable-4.20"    # must match the mirrored release
+sno_cluster_version: "4.20.0"        # must equal sno_mirror_max_version
 sno_bastion_disk_size: 100     # the mirrored payload lands on the bastion
 sno_mirror_channel: "stable-4.20"
 sno_mirror_min_version: "4.20.0"
@@ -452,11 +452,14 @@ sno_mirror_registry_password: "..."   # ansible-vault this
 **`sno_cluster_version` is not optional here.** It selects the
 `openshift-install` binary that builds the agent ISO, and the node installs
 whatever that binary resolves to. Leave it at the default `stable` while the
-mirror is pinned to 4.20 and the node asks the registry for a release that was
-never pushed: the install fails ~an hour in with `manifest unknown`, then falls
-back to quay.io, which it cannot reach
-([solution 7111547](https://access.redhat.com/solutions/7111547)). A preflight
-assert compares the two and stops the run in seconds instead. The host also
+mirror is pinned to 4.20.0 and the node asks the registry for a release that
+was never pushed: the install fails ~an hour in with `manifest unknown`, then
+falls back to quay.io, which it cannot reach
+([solution 7111547](https://access.redhat.com/solutions/7111547)). A stream
+with the right minor is not enough either — `stable-4.20` resolves to the
+newest 4.20.z, not to 4.20.0 — so pin the exact version. A preflight assert
+requires `sno_cluster_version` to equal `sno_mirror_max_version` and stops the
+run in seconds otherwise. The host also
 needs ≥ `sno_mirror_min_host_disk` (60 GB) free under `sno_base_dir` for
 `oc-mirror`'s workspace and cache; that is checked as well.
 
