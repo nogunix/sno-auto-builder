@@ -94,13 +94,23 @@
 # this topology — it is the *cluster* that is disconnected. A truly air-gapped
 # host would split this into `--workspace file://... file://archive` here and a
 # separate `docker://` push on the other side of the gap.
+#
+# shell, not command, for the umask: oc-mirror documents 0022 as a requirement,
+# and ansible's default is inherited from whatever ran the playbook. The parent
+# directory stays 0700, so this widens the payload files and not the CA key.
+#
+# --cache-dir is not cosmetic either. It defaults to $HOME and is *not* cleaned
+# up after a run, so without it tens of GB outlive the lab and 99-destroy-all
+# never sees them; under sno_mirror_dir they go with sno_base_dir.
 - name: Mirror the release payload into the bastion registry
-  ansible.builtin.command:
+  ansible.builtin.shell:
     cmd: >-
+      umask 0022 &&
       {{ sno_mirror_dir }}/oc-mirror --v2
       --config {{ sno_mirror_dir }}/imageset-config.yaml
       --authfile {{ sno_mirror_dir }}/containers/auth.json
       --workspace file://{{ sno_mirror_dir }}
+      --cache-dir {{ sno_mirror_dir }}/.cache
       docker://{{ sno_mirror_registry }}
   # No REGISTRY_AUTH_FILE here: oc-mirror embeds a distribution registry, which
   # treats every REGISTRY_* variable as a config override, fails to parse it,
