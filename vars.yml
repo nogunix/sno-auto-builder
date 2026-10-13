@@ -61,6 +61,16 @@ sno_interface: "enp1s0"
 sno_api_vip: "192.168.10.100"
 sno_ingress_vip: "192.168.10.101"
 
+# NTP sources handed to the node through agent-config.yaml. The bastion already
+# runs chrony and opens the ntp service in firewalld (helper_node.sh.j2); this
+# is what actually points the cluster at it. Without it the node has no
+# reachable time source — squid does not relay UDP/123, and a disconnected run
+# has no egress at all — and the agent's ntp_synchronizer validation can fail
+# the install with "Host couldn't synchronize with any NTP server".
+# Set to [] to omit the block entirely.
+sno_additional_ntp_sources:
+  - "{{ sno_proxy_ip }}"
+
 # Paths used for ISO generation on localhost and cluster monitoring (set by 01-infra-bastion.yml)
 sno_installer_path: "{{ sno_tf_dir }}/openshift-install"
 # Where 01-infra-bastion.yml fetches the installer tarball from. Override to
@@ -103,6 +113,11 @@ sno_mirror_dir: "{{ sno_base_dir }}/mirror"     # on the host: CA, certs, oc-mir
 # bastion gets. Checked by an assert before anything is created, so the run
 # fails in seconds rather than when the filesystem fills mid-mirror.
 sno_mirror_min_bastion_disk: 100
+
+# The host needs room too: oc-mirror keeps a workspace *and* a cache, and the
+# cache is not deleted after a run. Both are pinned under sno_mirror_dir so
+# that 99-destroy-all.yml reclaims them with sno_base_dir.
+sno_mirror_min_host_disk: 60
 
 sno_oc_mirror_url: "https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ sno_cluster_version }}/oc-mirror.tar.gz"
 

@@ -137,6 +137,8 @@ Review all items marked with `[CHANGE]`.
 
 The bastion's **management IP is not configurable** — it comes from the libvirt DHCP lease on `default_network`. The playbooks read it back from the `bastion_ip` OpenTofu output, so there is nothing to keep in sync. The management subnet and bridge themselves are `sno_mgmt_network` / `sno_mgmt_bridge`.
 
+`sno_additional_ntp_sources` defaults to the bastion (`sno_proxy_ip`), which already runs chrony. It becomes `additionalNTPSources` in `agent-config.yaml` and is the node's **only** reachable clock — squid does not relay NTP, and a disconnected run has no egress at all. Without it the agent's time-sync validation can fail the install ([solution 7020898](https://access.redhat.com/solutions/7020898)). Point it at your own NTP servers if you have them; `[]` omits the block.
+
 `sno_bastion_password` is stored in plaintext by default. For anything beyond a throwaway lab, encrypt it:
 
 ```bash
@@ -439,12 +441,24 @@ tear down first.
 ```yaml
 # vars.yml
 sno_disconnected: true
+sno_cluster_version: "stable-4.20"    # must match the mirrored release
 sno_bastion_disk_size: 100     # the mirrored payload lands on the bastion
 sno_mirror_channel: "stable-4.20"
 sno_mirror_min_version: "4.20.0"
 sno_mirror_max_version: "4.20.0"
 sno_mirror_registry_password: "..."   # ansible-vault this
 ```
+
+**`sno_cluster_version` is not optional here.** It selects the
+`openshift-install` binary that builds the agent ISO, and the node installs
+whatever that binary resolves to. Leave it at the default `stable` while the
+mirror is pinned to 4.20 and the node asks the registry for a release that was
+never pushed: the install fails ~an hour in with `manifest unknown`, then falls
+back to quay.io, which it cannot reach
+([solution 7111547](https://access.redhat.com/solutions/7111547)). A preflight
+assert compares the two and stops the run in seconds instead. The host also
+needs ≥ `sno_mirror_min_host_disk` (60 GB) free under `sno_base_dir` for
+`oc-mirror`'s workspace and cache; that is checked as well.
 
 Then run `01-infra-bastion.yml` as usual — the mirror stages are part of it:
 
@@ -483,7 +497,27 @@ sno_mirror_operators:
 Teardown needs nothing extra: the registry goes with the bastion VM, and
 `99-destroy-all.yml` removes the host's `/etc/hosts` entry and both copies of
 the mirror CA (the `certs.d` one and the system trust anchor) whether or not
-`sno_disconnected` is still set.
+`sno_disconnected` is still set. `oc-mirror`'s cache is pinned under
+`sno_mirror_dir` with `--cache-dir` rather than left in `$HOME`, where it
+would survive the lab unnoticed — it is not cleaned up after a run.
+
+**If image pulls still fail on the node**, check
+`<sno_mirror_dir>/working-dir/cluster-resources/idms-oc-mirror.yaml`
+against the `imageDigestSources` in `install-config.yaml` — that file is
+authoritative. There is also a known installer issue where
+`imageDigestSources` does not reach the node's `/etc/containers/registries.conf`
+and it pulls from the upstream registry instead
+([solution 7081644](https://access.redhat.com/solutions/7081644),
+OCPBUGS-36780); `imageContentSources` is the fallback, at the price of a
+deprecation warning.
+
+**Mirrored operators need a day-2 step.** `sno_mirror_operators` fills the
+registry, but the `CatalogSource` and `ImageTagMirrorSet` that make the catalog
+usable are written to
+`<sno_mirror_dir>/working-dir/cluster-resources/` and are **not** applied by
+these playbooks — `oc apply -f` them yourself once the cluster is up. The
+release payload itself needs nothing extra: `imageDigestSources` in
+`install-config.yaml` covers it.
 
 > **Not covered: a fully air-gapped build host.** This path assumes the host can
 > reach quay.io, mirror.openshift.com and the CentOS repos. Running the whole

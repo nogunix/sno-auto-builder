@@ -3,9 +3,20 @@ kind: AgentConfig
 metadata:
   name: {{ sno_cluster_name }}
 rendezvousIP: {{ sno_master_ip }}
+{% if sno_additional_ntp_sources %}
+additionalNTPSources:
+{% for _ntp in sno_additional_ntp_sources %}
+  - {{ _ntp }}
+{% endfor %}
+{% endif %}
 hosts:
   - hostname: master0.{{ sno_cluster_name }}.{{ sno_base_domain }}
     role: master
+{#  /dev/sda is the data volume only because master.tf.j2 attaches it with
+    `scsi = true` while the agent ISO rides the default (virtio) bus. The
+    installer docs recommend a stable identifier such as /dev/disk/by-path/...;
+    that is not knowable here before the VM exists, so the two files have to
+    stay in step — change the bus in master.tf.j2 and this hint breaks. #}
     rootDeviceHints:
       deviceName: /dev/sda
     interfaces:

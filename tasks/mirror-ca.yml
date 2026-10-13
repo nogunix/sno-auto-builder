@@ -30,6 +30,28 @@
       every run and lets the mirrored payload drift away from the
       openshift-install binary that builds the agent ISO.
 
+# The agent ISO is built by the openshift-install binary that sno_cluster_version
+# selects, but the node installs from whatever was mirrored. If the two differ,
+# the node asks the registry for a release image that was never pushed and the
+# install dies at `agent wait-for` with "manifest unknown", then falls back to
+# quay.io — which a disconnected cluster cannot reach. Red Hat's guidance is to
+# use the same version in both places, ideally by extracting the binary from the
+# mirror itself. Comparing the x.y is the most this can check without resolving
+# the stream; sno_release_image_override is the escape hatch for a z-stream skew.
+- name: Assert the installer stream matches the mirrored release
+  ansible.builtin.assert:
+    that:
+      - sno_cluster_version is not match('^(stable|fast|candidate|eus|latest)$')
+      - (sno_cluster_version | regex_search('[0-9]+[.][0-9]+'))
+        == (sno_mirror_max_version | regex_search('^[0-9]+[.][0-9]+'))
+    fail_msg: >-
+      sno_cluster_version is "{{ sno_cluster_version }}" but the mirror is
+      pinned to {{ sno_mirror_max_version }}. openshift-install would build the
+      agent ISO from a release the registry does not have, and the install
+      fails with "manifest unknown" an hour later. Set sno_cluster_version to
+      the matching stream, e.g.
+      "stable-{{ sno_mirror_max_version | regex_search('^[0-9]+[.][0-9]+') }}".
+
 - name: Create the mirror working directory
   ansible.builtin.file:
     path: "{{ item }}"
@@ -39,6 +61,26 @@
   loop:
     - "{{ sno_mirror_dir }}"
     - "{{ sno_mirror_dir }}/containers"
+
+# The bastion check above covers where the payload lands; this covers where it
+# is staged. oc-mirror writes a workspace and a cache on the host, the cache
+# survives the run, and both sit under sno_mirror_dir.
+- name: Measure the free space available to the mirror workspace
+  ansible.builtin.command:
+    cmd: df -BG --output=avail {{ sno_mirror_dir }}
+  register: _sno_mirror_host_avail
+  changed_when: false
+
+- name: Assert the host has room for the oc-mirror workspace and cache
+  ansible.builtin.assert:
+    that:
+      - (_sno_mirror_host_avail.stdout_lines[-1] | trim | regex_replace('G$', '') | int)
+        >= sno_mirror_min_host_disk | int
+    fail_msg: >-
+      {{ sno_mirror_dir }} has
+      {{ _sno_mirror_host_avail.stdout_lines[-1] | trim }} free, and oc-mirror
+      needs at least {{ sno_mirror_min_host_disk }} GB there for its workspace
+      and cache. Free up space or point sno_base_dir at a bigger filesystem.
 
 # The CA needs explicit basicConstraints/keyUsage: without them Python (and so
 # the uri/get_url checks elsewhere in this repo) rejects it with
