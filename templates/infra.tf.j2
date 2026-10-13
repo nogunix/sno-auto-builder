@@ -34,10 +34,16 @@ resource "libvirt_network" "default_network" {
   }
 }
 
+{#  Disconnected: "none" is libvirt's isolated mode. The host keeps
+    sno_gateway on the bridge, so it still reaches the VIPs and the node still
+    has a next hop for its default route, but nothing is forwarded off the
+    bridge. Under "nat" the node could reach quay.io directly, and a mirror
+    missing an image would silently fall back to upstream instead of failing.
+    The bastion is unaffected: its egress is the management NIC (metric 100). #}
 resource "libvirt_network" "{{ sno_prefix }}_network" {
   name      = "{{ sno_prefix }}_network"
   autostart = true
-  mode      = "nat"
+  mode      = "{{ 'none' if sno_disconnected | bool else 'nat' }}"
   addresses = ["{{ sno_machine_network }}"]
   dhcp {
     enabled = false
