@@ -1,0 +1,110 @@
+---
+# Disconnected install, stage 3 (localhost): trust the registry, then fill it.
+#
+# Imported by 01-infra-bastion.yml's ISO play, before install-config.yaml is
+# rendered — the agent ISO is built from the mirrored payload, so the content
+# has to be in place first.
+
+# The host resolves the registry by name so that the name in the certificate,
+# in imageDigestSources, and in what oc-mirror pushes to all match. The master
+# gets the same name from the bastion's dnsmasq instead.
+# The marker must stay byte-identical to the one 99-destroy-all.yml removes.
+- name: Add the mirror registry to /etc/hosts
+  ansible.builtin.blockinfile:
+    path: /etc/hosts
+    marker: "# {mark} SNO mirror registry ({{ sno_cluster_name }}.{{ sno_base_domain }})"
+    block: "{{ sno_proxy_ip }} {{ sno_mirror_registry_host }}"
+  become: true
+
+# Two trust stores, because two different consumers need it and they do not
+# share one: podman/oc-mirror (containers/image) read certs.d, while
+# openshift-install goes through the system bundle. Both are removed by
+# 99-destroy-all.yml.
+- name: Create the certs.d directory for the mirror registry
+  ansible.builtin.file:
+    path: "/etc/containers/certs.d/{{ sno_mirror_registry }}"
+    state: directory
+    mode: '0755'
+  become: true
+
+- name: Trust the mirror CA for containers/image
+  ansible.builtin.copy:
+    src: "{{ sno_mirror_dir }}/ca.crt"
+    dest: "/etc/containers/certs.d/{{ sno_mirror_registry }}/ca.crt"
+    mode: '0644'
+  become: true
+
+- name: Trust the mirror CA system-wide
+  ansible.builtin.copy:
+    src: "{{ sno_mirror_dir }}/ca.crt"
+    dest: "/etc/pki/ca-trust/source/anchors/sno-mirror-{{ sno_cluster_name }}.{{ sno_base_domain }}.crt"
+    mode: '0644'
+  become: true
+
+# Run unconditionally: extracting the bundle is idempotent and takes about a
+# second, and gating it on the copy above would mean a handler, which every
+# play importing this file would have to declare.
+- name: Rebuild the system trust bundle
+  ansible.builtin.command:
+    cmd: update-ca-trust extract
+  become: true
+  changed_when: false
+
+- name: Download the oc-mirror tarball
+  ansible.builtin.get_url:
+    url: "{{ sno_oc_mirror_url }}"
+    dest: "{{ sno_mirror_dir }}/oc-mirror.tar.gz"
+    mode: '0644'
+
+- name: Extract the oc-mirror binary
+  ansible.builtin.unarchive:
+    src: "{{ sno_mirror_dir }}/oc-mirror.tar.gz"
+    dest: "{{ sno_mirror_dir }}"
+    include:
+      - oc-mirror
+    creates: "{{ sno_mirror_dir }}/oc-mirror"
+
+- name: Render the ImageSetConfiguration
+  ansible.builtin.template:
+    src: "{{ playbook_dir }}/templates/imageset-config.yaml.j2"
+    dest: "{{ sno_mirror_dir }}/imageset-config.yaml"
+    mode: '0644'
+
+# This is the long pole of a disconnected run: ~20 GB pulled from quay.io and
+# pushed to the bastion, so budget 30-60 min on a first run depending on the
+# link. Subsequent runs reuse {{ sno_mirror_dir }}/working-dir and are fast.
+#
+# Mirror-to-mirror (no intermediate archive) because the host has internet in
+# this topology — it is the *cluster* that is disconnected. A truly air-gapped
+# host would split this into `--workspace file://... file://archive` here and a
+# separate `docker://` push on the other side of the gap.
+- name: Mirror the release payload into the bastion registry
+  ansible.builtin.command:
+    cmd: >-
+      {{ sno_mirror_dir }}/oc-mirror --v2
+      --config {{ sno_mirror_dir }}/imageset-config.yaml
+      --workspace file://{{ sno_mirror_dir }}
+      docker://{{ sno_mirror_registry }}
+  environment:
+    XDG_RUNTIME_DIR: "{{ sno_mirror_dir }}"
+    REGISTRY_AUTH_FILE: "{{ sno_mirror_dir }}/containers/auth.json"
+  changed_when: true
+
+- name: Verify the release payload reached the registry
+  ansible.builtin.uri:
+    url: "https://{{ sno_mirror_registry }}/v2/openshift/release-images/tags/list"
+    ca_path: "{{ sno_mirror_dir }}/ca.crt"
+    url_username: "{{ sno_mirror_registry_user }}"
+    url_password: "{{ sno_mirror_registry_password }}"
+    force_basic_auth: true
+  register: _sno_mirror_tags
+  no_log: true
+
+- name: Assert the mirrored release is the one that was asked for
+  ansible.builtin.assert:
+    that:
+      - (_sno_mirror_tags.json.tags | default([])) | length > 0
+    fail_msg: >-
+      The registry has no tags under openshift/release-images. oc-mirror
+      reported success but pushed nothing usable — check
+      {{ sno_mirror_dir }}/working-dir/logs/ before starting the install.

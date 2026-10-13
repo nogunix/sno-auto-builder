@@ -1,0 +1,133 @@
+---
+# Disconnected install, stage 1 (localhost): preflight, registry PKI, and the
+# pull secret the rest of the run uses.
+#
+# Imported near the top of 01-infra-bastion.yml's infrastructure play so the
+# asserts fire before anything is created, and so the server certificate exists
+# by the time the bastion play needs to copy it over.
+
+- name: Assert the bastion disk is large enough for a mirror
+  ansible.builtin.assert:
+    that:
+      - sno_bastion_disk_size | int >= sno_mirror_min_bastion_disk | int
+    fail_msg: >-
+      sno_disconnected is true but sno_bastion_disk_size is
+      {{ sno_bastion_disk_size }} GB. The mirrored release payload alone is
+      ~20 GB and lands on the bastion, so set sno_bastion_disk_size to at least
+      {{ sno_mirror_min_bastion_disk }} in vars.yml. The volume is thin
+      provisioned qcow2, so the unused space costs nothing. Note that changing
+      it on an existing lab makes OpenTofu replace the bastion volume.
+
+- name: Assert the mirror release range is pinned
+  ansible.builtin.assert:
+    that:
+      - sno_mirror_min_version | length > 0
+      - sno_mirror_max_version | length > 0
+      - sno_mirror_channel is not match('^stable$')
+    fail_msg: >-
+      Pin sno_mirror_channel / sno_mirror_min_version / sno_mirror_max_version
+      to an exact release. An unpinned channel makes oc-mirror re-resolve on
+      every run and lets the mirrored payload drift away from the
+      openshift-install binary that builds the agent ISO.
+
+- name: Create the mirror working directory
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    # Holds the CA private key and the merged pull secret.
+    mode: '0700'
+  loop:
+    - "{{ sno_mirror_dir }}"
+    - "{{ sno_mirror_dir }}/containers"
+
+# The CA needs explicit basicConstraints/keyUsage: without them Python (and so
+# the uri/get_url checks elsewhere in this repo) rejects it with
+# "CA cert does not include key usage extension".
+- name: Generate the mirror registry CA
+  ansible.builtin.command:
+    cmd: >-
+      openssl req -x509 -newkey rsa:4096 -sha256 -days 3650 -nodes
+      -keyout {{ sno_mirror_dir }}/ca.key
+      -out {{ sno_mirror_dir }}/ca.crt
+      -subj "/CN=SNO Mirror CA ({{ sno_cluster_name }}.{{ sno_base_domain }})"
+      -addext "basicConstraints=critical,CA:TRUE,pathlen:0"
+      -addext "keyUsage=critical,keyCertSign,cRLSign"
+    creates: "{{ sno_mirror_dir }}/ca.crt"
+
+- name: Write the registry certificate extensions
+  ansible.builtin.copy:
+    dest: "{{ sno_mirror_dir }}/registry.ext"
+    mode: '0644'
+    # The IP SAN matters as much as the DNS one: the host pushes to the
+    # registry before its /etc/hosts entry is guaranteed to be in place, and
+    # podman on the bastion addresses it by IP.
+    content: |
+      basicConstraints = CA:FALSE
+      keyUsage = critical, digitalSignature, keyEncipherment
+      extendedKeyUsage = serverAuth
+      subjectAltName = DNS:{{ sno_mirror_registry_host }}, IP:{{ sno_proxy_ip }}
+
+- name: Generate the registry key and CSR
+  ansible.builtin.command:
+    cmd: >-
+      openssl req -newkey rsa:2048 -sha256 -nodes
+      -keyout {{ sno_mirror_dir }}/registry.key
+      -out {{ sno_mirror_dir }}/registry.csr
+      -subj "/CN={{ sno_mirror_registry_host }}"
+    creates: "{{ sno_mirror_dir }}/registry.csr"
+
+- name: Sign the registry certificate
+  ansible.builtin.command:
+    cmd: >-
+      openssl x509 -req -sha256 -days 3650
+      -in {{ sno_mirror_dir }}/registry.csr
+      -CA {{ sno_mirror_dir }}/ca.crt
+      -CAkey {{ sno_mirror_dir }}/ca.key
+      -CAcreateserial
+      -extfile {{ sno_mirror_dir }}/registry.ext
+      -out {{ sno_mirror_dir }}/registry.crt
+    creates: "{{ sno_mirror_dir }}/registry.crt"
+
+- name: Restrict the private keys
+  ansible.builtin.file:
+    path: "{{ item }}"
+    mode: '0600'
+  loop:
+    - "{{ sno_mirror_dir }}/ca.key"
+    - "{{ sno_mirror_dir }}/registry.key"
+
+- name: Read the CA certificate
+  ansible.builtin.slurp:
+    src: "{{ sno_mirror_dir }}/ca.crt"
+  register: _sno_mirror_ca_b64
+
+# Consumed by install-config.yaml.j2's additionalTrustBundle in the ISO play.
+# set_fact persists across plays for the same host, so this survives the hop
+# through the bastion play.
+- name: Set the mirror CA fact
+  ansible.builtin.set_fact:
+    _sno_mirror_ca_cert: "{{ _sno_mirror_ca_b64.content | b64decode | trim }}"
+
+- name: Read the Red Hat pull secret
+  ansible.builtin.slurp:
+    src: "{{ sno_pull_secret_path }}"
+  register: _sno_pull_secret_b64
+  no_log: true
+
+# oc-mirror reads $XDG_RUNTIME_DIR/containers/auth.json, and install-config
+# needs the same credentials so the node can pull from the mirror. One file
+# serves both rather than keeping two copies of a secret on disk.
+- name: Write the pull secret merged with the mirror credentials
+  ansible.builtin.copy:
+    dest: "{{ sno_mirror_dir }}/containers/auth.json"
+    mode: '0600'
+    content: >-
+      {{ {'auths': (_sno_pull_secret_b64.content | b64decode | from_json).auths
+          | combine({sno_mirror_registry: {
+              'auth': (sno_mirror_registry_user ~ ':' ~ sno_mirror_registry_password) | b64encode,
+              'email': 'mirror@' ~ sno_base_domain}})} | to_nice_json }}
+  no_log: true
+
+- name: Use the merged pull secret for the rest of the run
+  ansible.builtin.set_fact:
+    _sno_effective_pull_secret: "{{ sno_mirror_dir }}/containers/auth.json"

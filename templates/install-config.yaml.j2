@@ -20,9 +20,30 @@ networking:
 platform:
   none: {}
 fips: false
+{% if sno_disconnected %}
+# Disconnected: no proxy block at all. The cluster reaches the bastion and
+# nothing else, so handing it a squid that can egress would defeat the point.
+#
+# additionalTrustBundlePolicy must be Always. The default, Proxyonly, only
+# injects additionalTrustBundle into the cluster trust when a proxy is also
+# configured — which is exactly the case we just removed, so leaving it at the
+# default silently drops the mirror CA and every image pull fails x509.
+additionalTrustBundlePolicy: Always
+additionalTrustBundle: |
+{{ _sno_mirror_ca_cert | trim | indent(2, true) }}
+imageDigestSources:
+{% for _src in sno_mirror_image_sources %}
+  - source: {{ _src.source }}
+    mirrors:
+{% for _mirror in _src.mirrors %}
+      - {{ _mirror }}
+{% endfor %}
+{% endfor %}
+{% else %}
 proxy:
   httpProxy: http://{{ sno_proxy_ip }}:{{ sno_proxy_port }}
   httpsProxy: http://{{ sno_proxy_ip }}:{{ sno_proxy_port }}
   noProxy: {{ sno_machine_network }},.{{ sno_cluster_name }}.{{ sno_base_domain }},.cluster.local,.svc,.local,localhost,127.0.0.1
-pullSecret: '{{ lookup("file", sno_pull_secret_path) }}'
+{% endif %}
+pullSecret: '{{ lookup("file", _sno_effective_pull_secret | default(sno_pull_secret_path)) }}'
 sshKey: '{{ _sno_ssh_pubkey }}'

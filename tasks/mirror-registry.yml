@@ -1,0 +1,105 @@
+---
+# Disconnected install, stage 2 (bastion): run the mirror registry.
+#
+# Imported by 01-infra-bastion.yml's bastion play, deliberately *outside* the
+# helper_node.sh idempotency guard — the registry has to come up even on a
+# re-run where the bastion is already configured. That play also declares the
+# "Restart the mirror registry" handler this file notifies; handlers can only
+# be declared by a play.
+#
+# Plain Docker Distribution rather than Red Hat's mirror-registry: that one is
+# supported on RHEL only and wants ~8 GB RAM, and this bastion is CentOS Stream
+# with sno_bastion_memory (4 GB by default).
+
+- name: Install podman and htpasswd on the bastion
+  ansible.builtin.dnf:
+    name:
+      - podman
+      - httpd-tools
+    state: present
+  become: true
+
+- name: Create the mirror registry directories
+  ansible.builtin.file:
+    path: "{{ sno_mirror_registry_dir }}/{{ item }}"
+    state: directory
+    mode: '0700'
+  become: true
+  loop:
+    - data
+    - certs
+    - auth
+
+- name: Install the registry certificate and CA on the bastion
+  ansible.builtin.copy:
+    src: "{{ sno_mirror_dir }}/{{ item.src }}"
+    dest: "{{ sno_mirror_registry_dir }}/certs/{{ item.src }}"
+    mode: "{{ item.mode }}"
+  become: true
+  loop:
+    - {src: registry.crt, mode: '0644'}
+    - {src: registry.key, mode: '0600'}
+    - {src: ca.crt, mode: '0644'}
+  loop_control:
+    label: "{{ item.src }}"
+  notify: Restart the mirror registry
+
+# bcrypt re-salts on every invocation, so the file content always differs and
+# there is nothing meaningful to compare against — hence changed_when: false.
+# Distribution re-reads the htpasswd file per request, so rewriting it does not
+# need a restart.
+- name: Create the registry htpasswd file
+  ansible.builtin.command:
+    cmd: >-
+      htpasswd -Bbc {{ sno_mirror_registry_dir }}/auth/htpasswd
+      {{ sno_mirror_registry_user }} {{ sno_mirror_registry_password }}
+  become: true
+  changed_when: false
+  no_log: true
+
+# Quadlet rather than `podman generate systemd`, which is deprecated. CentOS
+# Stream 9 ships podman 4.4+, which is where Quadlet landed.
+- name: Install the mirror registry Quadlet unit
+  ansible.builtin.template:
+    src: "{{ playbook_dir }}/templates/mirror-registry.container.j2"
+    dest: /etc/containers/systemd/sno-mirror-registry.container
+    mode: '0644'
+  become: true
+  notify: Restart the mirror registry
+
+# daemon_reload is what turns the Quadlet file into sno-mirror-registry.service,
+# so it has to happen here rather than in the handler — on a first run the unit
+# does not exist yet and "started" would fail outright.
+- name: Ensure the mirror registry is running
+  ansible.builtin.systemd_service:
+    name: sno-mirror-registry.service
+    state: started
+    daemon_reload: true
+  become: true
+
+# The checks below have to see the config that was just written, not the one
+# the registry happened to start with.
+- name: Apply any pending registry restart before verifying
+  ansible.builtin.meta: flush_handlers
+
+- name: Open the mirror registry port
+  ansible.posix.firewalld:
+    port: "{{ sno_mirror_registry_port }}/tcp"
+    permanent: true
+    state: enabled
+    immediate: true
+  become: true
+
+- name: Wait for the mirror registry to listen
+  ansible.builtin.wait_for:
+    host: "{{ sno_proxy_ip }}"
+    port: "{{ sno_mirror_registry_port }}"
+    timeout: 120
+
+# A 401 proves TLS terminated *and* htpasswd auth is enforced. An anonymous 200
+# would mean REGISTRY_AUTH never took effect.
+- name: Verify the registry demands authentication over TLS
+  ansible.builtin.uri:
+    url: "https://{{ sno_proxy_ip }}:{{ sno_mirror_registry_port }}/v2/"
+    ca_path: "{{ sno_mirror_registry_dir }}/certs/ca.crt"
+    status_code: 401

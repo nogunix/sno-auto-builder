@@ -62,6 +62,9 @@ Runs comfortably on a Linux mini PC or spare workstation:
 | bastion (CentOS Stream) | 2 | 4 GB | 20 GB |
 | SNO master (RHCOS) | 8 | 20 GB | 120 GB |
 
+A [disconnected install](#disconnected-installs) puts a mirror registry on the
+bastion and needs ≥ 100 GB there instead of 20 GB.
+
 ## Prerequisites
 
 - Fedora / RHEL 9+ / CentOS Stream 9+ / Ubuntu 22.04+ + libvirt/KVM
@@ -409,6 +412,75 @@ sno_master_disk_size: 200 # more disk for persistent volumes
 ```
 
 The bastion VM (DNS, proxy, HAProxy, NFS, chrony) is lightweight and rarely needs more than the default 2 vCPU / 4 GB.
+
+## Disconnected installs
+
+By default the cluster is **connected**: it reaches quay.io through the squid
+proxy on the bastion. Setting `sno_disconnected: true` in `vars.yml` switches to
+a **disconnected** install instead — a registry on the bastion serves the
+mirrored release payload, the proxy block disappears from `install-config.yaml`,
+and the SNO node talks to nothing but the bastion.
+
+The *host* still needs internet. It is what runs `oc-mirror`; it is the cluster
+that is cut off. That covers the usual "the cluster must not egress" requirement
+without the extra machinery of a fully air-gapped build host (local dnf repos,
+media handoff, offline collections) — see the note at the end of this section.
+
+```yaml
+# vars.yml
+sno_disconnected: true
+sno_bastion_disk_size: 100     # the mirrored payload lands on the bastion
+sno_mirror_channel: "stable-4.20"
+sno_mirror_min_version: "4.20.0"
+sno_mirror_max_version: "4.20.0"
+sno_mirror_registry_password: "..."   # ansible-vault this
+```
+
+Then run `01-infra-bastion.yml` as usual — the mirror stages are part of it:
+
+1. **Preflight and PKI** (`tasks/mirror-ca.yml`, localhost) — asserts the
+   bastion disk is big enough and the release range is pinned, generates a CA
+   and a server certificate for the registry, and merges the mirror credentials
+   into a copy of your pull secret.
+2. **Registry** (`tasks/mirror-registry.yml`, bastion) — runs
+   `quay.io/libpod/registry:2.8.2` as a Quadlet unit on port **8443** (443 is
+   already HAProxy's), with TLS and htpasswd auth, and verifies it answers
+   `401` over HTTPS.
+3. **Mirroring** (`tasks/mirror-content.yml`, localhost) — trusts the CA,
+   downloads `oc-mirror`, renders the `ImageSetConfiguration`, and mirrors the
+   payload straight into the bastion registry.
+
+`install-config.yaml` then gets `imageDigestSources`, `additionalTrustBundle`
+and `additionalTrustBundlePolicy: Always`, and the agent ISO is built from the
+mirrored payload.
+
+**Budget for it.** Mirroring pulls roughly 20 GB and pushes it to the bastion,
+so a first run adds **30–60 minutes** to playbook `01` depending on your link,
+and the bastion needs **≥ 100 GB** of disk. The volume is thin-provisioned
+qcow2, so the unused space costs nothing — but raising
+`sno_bastion_disk_size` on an *existing* lab makes OpenTofu replace the bastion
+volume. Set it before the first run, or tear down first.
+
+To mirror operators as well, fill in `sno_mirror_operators`:
+
+```yaml
+sno_mirror_operators:
+  - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.20
+    packages:
+      - name: local-storage-operator
+```
+
+Teardown needs nothing extra: the registry goes with the bastion VM, and
+`99-destroy-all.yml` removes the host's `/etc/hosts` entry and both copies of
+the mirror CA (the `certs.d` one and the system trust anchor) whether or not
+`sno_disconnected` is still set.
+
+> **Not covered: a fully air-gapped build host.** This path assumes the host can
+> reach quay.io, mirror.openshift.com and the CentOS repos. Running the whole
+> thing with no internet at all additionally needs a local dnf repository, an
+> offline cloud image, pre-fetched OpenTofu providers and Ansible collections,
+> and a two-sided `oc-mirror` (`file://` archive on the connected side, push on
+> the other). That is a different project shape, not a flag.
 
 ## Comparison with OpenShift Local (CRC)
 

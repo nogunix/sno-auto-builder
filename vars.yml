@@ -68,6 +68,77 @@ sno_installer_path: "{{ sno_tf_dir }}/openshift-install"
 sno_installer_url: "https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ sno_cluster_version }}/openshift-install-linux.tar.gz"
 sno_manifests_dir: "{{ sno_tf_dir }}/generated/{{ sno_cluster_name }}"
 
+# ==============================================================================
+# Disconnected install — mirror registry on the bastion
+# ==============================================================================
+# false — connected install: the cluster pulls from quay.io through the
+#         bastion's squid proxy. This is the original behaviour and the
+#         default; nothing below is used.
+# true  — disconnected install: a registry on the bastion serves the mirrored
+#         release payload, the proxy block is dropped from install-config, and
+#         the cluster never talks to anything but the bastion. The *host* still
+#         needs internet — it is what runs oc-mirror. See README.md.
+sno_disconnected: false
+
+# Registry endpoint, as the cluster sees it. Port 8443 because the bastion's
+# HAProxy already owns 443 (helper_node.sh.j2). The hostname must be one the
+# master can resolve: helper_node.sh writes bastion0.<cluster>.<domain> into the
+# bastion's /etc/hosts, and its dnsmasq serves that to the cluster.
+sno_mirror_registry_host: "bastion0.{{ sno_cluster_name }}.{{ sno_base_domain }}"
+sno_mirror_registry_port: 8443
+sno_mirror_registry: "{{ sno_mirror_registry_host }}:{{ sno_mirror_registry_port }}"
+sno_mirror_registry_user: "mirror"
+# [CHANGE] sno_mirror_registry_password — store it with ansible-vault for
+#          anything but a throwaway lab (same reasoning as the bastion password)
+sno_mirror_registry_password: "mirror"
+# Plain Docker Distribution. Red Hat's mirror-registry (Quay mini) is supported
+# on RHEL only — this bastion is CentOS Stream — and wants ~8 GB RAM against the
+# 4 GB here. Pulled from quay.io rather than docker.io to stay clear of Docker
+# Hub's anonymous rate limit.
+sno_mirror_registry_image: "quay.io/libpod/registry:2.8.2"
+sno_mirror_registry_dir: "/opt/sno-mirror"      # on the bastion
+sno_mirror_dir: "{{ sno_base_dir }}/mirror"     # on the host: CA, certs, oc-mirror workspace
+
+# Mirroring the release payload needs far more than the 20 GB a connected
+# bastion gets. Checked by an assert before anything is created, so the run
+# fails in seconds rather than when the filesystem fills mid-mirror.
+sno_mirror_min_bastion_disk: 100
+
+sno_oc_mirror_url: "https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ sno_cluster_version }}/oc-mirror.tar.gz"
+
+# What to mirror. Pin exact versions: "stable" moves, and a moving target makes
+# oc-mirror re-resolve (and the cluster's mirrored payload drift from the
+# installer binary) on every run.
+# Mirror the Cincinnati graph image too. Only needed to drive in-cluster
+# upgrades via OSUS; it costs an extra api.openshift.com fetch and build step.
+sno_mirror_graph: false
+sno_mirror_channel: "stable-4.20"
+sno_mirror_min_version: "4.20.0"
+sno_mirror_max_version: "4.20.0"
+# Optional extras, e.g.
+#   sno_mirror_operators:
+#     - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.20
+#       packages: [{name: local-storage-operator}]
+sno_mirror_operators: []
+sno_mirror_additional_images: []
+
+# Where the mirrored payload ends up, as install-config's imageDigestSources.
+# These two paths are oc-mirror v2's layout. oc-mirror also writes the
+# authoritative version to
+#   {{ sno_mirror_dir }}/working-dir/cluster-resources/idms-oc-mirror.yaml
+# after a successful run — compare against it if image pulls fail on the node.
+sno_mirror_image_sources:
+  - source: quay.io/openshift-release-dev/ocp-release
+    mirrors:
+      - "{{ sno_mirror_registry }}/openshift/release-images"
+  - source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
+    mirrors:
+      - "{{ sno_mirror_registry }}/openshift/release"
+
+# Escape hatch: pin the exact release image `openshift-install` pulls when
+# building the agent ISO. Leave empty to let the installer resolve it.
+sno_release_image_override: ""
+
 # openshift-mcp-server — used by 04-deploy-mcp-server.yml
 # The pod runs on this host with hostNetwork, so sno_mcp_port is a host port and
 # must be free. 8080 is a common collision; 8082 is the default here for that
