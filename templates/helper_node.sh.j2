@@ -200,11 +200,23 @@ fi
 
 echo "=== Setup OCP Client ==="
 dnf install -y tree tar curl bash-completion httpd-tools
-curl -OL https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/$CLUSTER_VERSION/openshift-client-linux.tar.gz
+
+# This script is not re-runnable once it gets past the network setup (the
+# semanage port additions fail as "already defined" under set -e), so a single
+# dropped connection here costs a full 99 + 01. mirror.openshift.com does drop
+# them: "curl: (35) OpenSSL SSL_connect: Connection reset by peer" was seen on
+# two of three live runs. --retry alone only covers timeouts and 5xx, so a TLS
+# reset needs --retry-all-errors (curl >= 7.71; CentOS Stream 9 ships 7.76).
+# -f keeps an HTTP error page from being saved as the tarball.
+fetch() {
+  curl -fL --retry 5 --retry-delay 5 --retry-all-errors -O "$1"
+}
+
+fetch https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/$CLUSTER_VERSION/openshift-client-linux.tar.gz
 tar xzvf openshift-client-linux.tar.gz -C /usr/local/bin/
 rm -f /usr/local/bin/README.md
 
-curl -OL https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/$CLUSTER_VERSION/openshift-install-linux.tar.gz
+fetch https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/$CLUSTER_VERSION/openshift-install-linux.tar.gz
 tar xzvf openshift-install-linux.tar.gz -C /usr/local/bin/ openshift-install
 
 # Ensure /usr/local/bin is on sudo's secure_path so `sudo oc` works
