@@ -1,0 +1,26 @@
+---
+# oc-mirror v2 ImageSetConfiguration for {{ sno_cluster_name }}.{{ sno_base_domain }}
+#
+# apiVersion is v2alpha1 — the schema oc-mirror v2 reads. The v1 schema
+# (mirror.openshift.io/v1alpha2) is a different shape and is not accepted by
+# the v2 code path this repo invokes with `--v2`.
+apiVersion: mirror.openshift.io/v2alpha1
+kind: ImageSetConfiguration
+mirror:
+  platform:
+    # The Cincinnati graph image, needed only to drive in-cluster upgrades via
+    # OSUS. It costs an extra build step and an api.openshift.com fetch, so a
+    # single-version lab leaves it off.
+    graph: {{ sno_mirror_graph | bool | lower }}
+    channels:
+      - name: {{ sno_mirror_channel }}
+        minVersion: "{{ sno_mirror_min_version }}"
+        maxVersion: "{{ sno_mirror_max_version }}"
+{% if sno_mirror_operators %}
+  operators:
+{{ (sno_mirror_operators | to_nice_yaml(indent=2)).strip() | indent(4, true) }}
+{% endif %}
+{% if sno_mirror_additional_images %}
+  additionalImages:
+{{ (sno_mirror_additional_images | to_nice_yaml(indent=2)).strip() | indent(4, true) }}
+{% endif %}

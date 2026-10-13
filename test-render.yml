@@ -12,6 +12,13 @@
     sno_installer_path: /tmp/sno-rendered/openshift-install
     sno_manifests_dir: /tmp/sno-rendered/generated/ocp4
     _sno_ssh_pubkey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForCITesting ci@github-actions"
+    sno_mirror_dir: /tmp/sno-rendered/mirror
+    # Only has to look like a PEM: this exercises the indentation of the
+    # additionalTrustBundle block, not certificate parsing.
+    _ci_fake_ca: |-
+      -----BEGIN CERTIFICATE-----
+      MIIBfakeCertificateForCITestingOnlyNotARealKeyAtAll
+      -----END CERTIFICATE-----
   tasks:
     - name: Create output directory
       ansible.builtin.file:
@@ -86,3 +93,80 @@
         src: templates/openshift-mcp-server-pod.yaml.j2
         dest: /tmp/sno-rendered/openshift-mcp-server-pod.yaml
         mode: "0644"
+
+    # --- disconnected variants ---
+    # `tofu validate` only covers the .tf output, so the YAML templates are
+    # parsed back here instead. install-config.yaml.j2 is the one that matters:
+    # its disconnected branch embeds a PEM block, and a one-space indentation
+    # slip there produces a file that renders fine and fails at install time.
+    - name: Render install-config.yaml (disconnected)
+      ansible.builtin.template:
+        src: templates/install-config.yaml.j2
+        dest: /tmp/sno-rendered/install-config-disconnected.yaml
+        mode: "0644"
+      vars:
+        sno_disconnected: true
+        _sno_mirror_ca_cert: "{{ _ci_fake_ca }}"
+
+    - name: Render the ImageSetConfiguration
+      ansible.builtin.template:
+        src: templates/imageset-config.yaml.j2
+        dest: /tmp/sno-rendered/imageset-config.yaml
+        mode: "0644"
+      vars:
+        sno_mirror_operators:
+          - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.20
+            packages:
+              - name: local-storage-operator
+        sno_mirror_additional_images:
+          - name: registry.redhat.io/ubi9/ubi:latest
+
+    - name: Render the mirror registry Quadlet unit
+      ansible.builtin.template:
+        src: templates/mirror-registry.container.j2
+        dest: /tmp/sno-rendered/sno-mirror-registry.container
+        mode: "0644"
+
+    - name: Read back the rendered YAML
+      ansible.builtin.slurp:
+        src: "/tmp/sno-rendered/{{ item }}"
+      register: _rendered_yaml
+      loop:
+        - install-config.yaml
+        - install-config-disconnected.yaml
+        - imageset-config.yaml
+
+    - name: Assert the connected install-config still proxies and does not mirror
+      ansible.builtin.assert:
+        that:
+          - "'proxy' in _ic"
+          - "'imageDigestSources' not in _ic"
+          - "'additionalTrustBundle' not in _ic"
+        fail_msg: "The connected install-config changed shape: {{ _ic.keys() | list }}"
+      vars:
+        _ic: "{{ _rendered_yaml.results[0].content | b64decode | from_yaml }}"
+
+    - name: Assert the disconnected install-config drops the proxy and wires the mirror
+      ansible.builtin.assert:
+        that:
+          - "'proxy' not in _ic"
+          # Proxyonly (the default) would silently drop the CA now that there
+          # is no proxy, and every image pull would fail x509.
+          - _ic.additionalTrustBundlePolicy == 'Always'
+          - "'BEGIN CERTIFICATE' in _ic.additionalTrustBundle"
+          - _ic.imageDigestSources | length == 2
+          - _ic.imageDigestSources[0].mirrors[0] is search(':8443/openshift/release-images$')
+        fail_msg: "The disconnected install-config is wrong: {{ _ic }}"
+      vars:
+        _ic: "{{ _rendered_yaml.results[1].content | b64decode | from_yaml }}"
+
+    - name: Assert the ImageSetConfiguration is the v2 schema and pinned
+      ansible.builtin.assert:
+        that:
+          - _isc.apiVersion == 'mirror.openshift.io/v2alpha1'
+          - _isc.mirror.platform.channels[0].minVersion | length > 0
+          - _isc.mirror.operators | length == 1
+          - _isc.mirror.additionalImages | length == 1
+        fail_msg: "The ImageSetConfiguration is wrong: {{ _isc }}"
+      vars:
+        _isc: "{{ _rendered_yaml.results[2].content | b64decode | from_yaml }}"

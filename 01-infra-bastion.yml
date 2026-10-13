@@ -54,6 +54,13 @@
     - vars.yml
 
   tasks:
+    # First, so the disconnected preflight asserts fail before anything is
+    # created, and so the registry certificate exists by the time the bastion
+    # play needs to copy it over.
+    - name: Prepare the mirror registry PKI and pull secret
+      ansible.builtin.import_tasks: tasks/mirror-ca.yml
+      when: sno_disconnected | bool
+
     - name: Remove legacy standalone .tf files superseded by infra.tf
       ansible.builtin.file:
         path: "{{ sno_tf_dir }}/{{ item }}"
@@ -181,6 +188,22 @@
           become: true
           changed_when: true
 
+    # Outside the helper_node.sh guard above on purpose: the registry has to
+    # come up on a re-run too, where the bastion is already configured.
+    - name: Run the mirror registry on the bastion
+      ansible.builtin.import_tasks: tasks/mirror-registry.yml
+      when: sno_disconnected | bool
+
+  handlers:
+    # Notified by tasks/mirror-registry.yml when the certificate or the Quadlet
+    # unit changes. It lives here rather than in the tasks file because only a
+    # play can declare handlers.
+    - name: Restart the mirror registry
+      ansible.builtin.systemd_service:
+        name: sno-mirror-registry.service
+        state: restarted
+      become: true
+
 - name: SNO - generate agent ISO on localhost
   hosts: localhost
   gather_facts: true
@@ -237,6 +260,12 @@
           - openshift-install
         creates: "{{ sno_installer_path }}"
 
+    # Must precede install-config: the ISO is built from the mirrored payload,
+    # and the template needs the CA and the merged pull secret this sets up.
+    - name: Mirror the release payload into the bastion registry
+      ansible.builtin.import_tasks: tasks/mirror-content.yml
+      when: sno_disconnected | bool
+
     - name: Render install-config.yaml
       ansible.builtin.template:
         src: templates/install-config.yaml.j2
@@ -289,11 +318,20 @@
                       [Install]
                       WantedBy=sysinit.target
 
+    # Built as a dict rather than inline so the release override can be absent
+    # entirely: openshift-install treats an empty
+    # OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE as a value, not as unset.
+    - name: Build the agent ISO environment
+      ansible.builtin.set_fact:
+        _sno_iso_env: >-
+          {{ {'XDG_RUNTIME_DIR': sno_manifests_dir}
+             | combine({'OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE': sno_release_image_override}
+                       if sno_release_image_override | length > 0 else {}) }}
+
     - name: Generate agent ISO
       ansible.builtin.command:
         cmd: "{{ sno_installer_path }} agent create image --dir {{ sno_manifests_dir }}"
-      environment:
-        XDG_RUNTIME_DIR: "{{ sno_manifests_dir }}"
+      environment: "{{ _sno_iso_env }}"
       changed_when: true
 
     - name: Copy agent ISO to work directory

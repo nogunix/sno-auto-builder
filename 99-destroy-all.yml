@@ -88,6 +88,40 @@
         state: absent
       become: true
 
+    # --- disconnected mirror cleanup ---
+    # Deliberately not gated on sno_disconnected: flipping the flag back to
+    # false before tearing down would otherwise leak a host trust anchor and an
+    # /etc/hosts entry for a registry that no longer exists. Removing what is
+    # not there is a no-op. The registry itself goes with the bastion VM, and
+    # sno_mirror_dir goes with sno_base_dir above.
+    - name: Remove the mirror registry entry from /etc/hosts
+      ansible.builtin.blockinfile:
+        path: /etc/hosts
+        marker: "# {mark} SNO mirror registry ({{ sno_cluster_name }}.{{ sno_base_domain }})"
+        state: absent
+      become: true
+
+    - name: Remove the mirror CA from the containers trust store
+      ansible.builtin.file:
+        path: "/etc/containers/certs.d/{{ sno_mirror_registry }}"
+        state: absent
+      become: true
+
+    - name: Remove the mirror CA from the system trust store
+      ansible.builtin.file:
+        path: "/etc/pki/ca-trust/source/anchors/sno-mirror-{{ sno_cluster_name }}.{{ sno_base_domain }}.crt"
+        state: absent
+      become: true
+
+    # Unconditional for the same reason as the rest of this teardown: cheap,
+    # idempotent, and skipping it would leave the removed anchor still baked
+    # into the extracted bundle.
+    - name: Rebuild the system trust bundle
+      ansible.builtin.command:
+        cmd: update-ca-trust extract
+      become: true
+      changed_when: false
+
     # --- nginx backend-aware cleanup ---
     # If other clusters still have backends registered, rebuild the SNI config
     # instead of tearing nginx down entirely.
