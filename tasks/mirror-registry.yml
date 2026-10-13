@@ -103,3 +103,6 @@
     url: "https://{{ sno_proxy_ip }}:{{ sno_mirror_registry_port }}/v2/"
     ca_path: "{{ sno_mirror_registry_dir }}/certs/ca.crt"
     status_code: 401
+  # The certs directory is root-only (0700), so as the bastion user the CA read
+  # fails with EACCES, which uri reports as a connection failure.
+  become: true
