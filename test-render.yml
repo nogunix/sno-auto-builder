@@ -135,6 +135,7 @@
         - install-config.yaml
         - install-config-disconnected.yaml
         - imageset-config.yaml
+        - agent-config.yaml
 
     - name: Assert the connected install-config still proxies and does not mirror
       ansible.builtin.assert:
@@ -202,3 +203,16 @@
       vars:
         _connected: "{{ _rendered_infra.results[0].content | b64decode }}"
         _disconnected: "{{ _rendered_infra.results[1].content | b64decode }}"
+
+    # The node has no other reachable clock: squid does not relay UDP/123 and a
+    # disconnected run has no egress at all, so dropping this block sends the
+    # agent's ntp_synchronizer validation looking for a server it cannot find.
+    - name: Assert the agent config points the node at the bastion clock
+      ansible.builtin.assert:
+        that:
+          - _ac.additionalNTPSources | default([]) | length > 0
+          - sno_proxy_ip in _ac.additionalNTPSources
+          - _ac.rendezvousIP == sno_master_ip
+        fail_msg: "The agent config lost its NTP sources: {{ _ac }}"
+      vars:
+        _ac: "{{ _rendered_yaml.results[3].content | b64decode | from_yaml }}"
