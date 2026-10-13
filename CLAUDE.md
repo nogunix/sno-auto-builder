@@ -189,6 +189,7 @@ built from it.
 Host (libvirt)
   ├─ default_network  192.168.222.0/24  NAT  DHCP — host ↔ bastion management NIC
   └─ sno_network      192.168.10.0/24   NAT  no DHCP — bastion cluster NIC ↔ master
+                                         (isolated, no forwarding, when sno_disconnected)
        bastion eth1:  192.168.10.2 (proxy_ip) + .100 (api_vip) + .101 (ingress_vip)
        master enp1s0: 192.168.10.10
 ```
@@ -217,6 +218,7 @@ Host (libvirt)
 - **The disconnected path is not covered by the mocked runs yet.** `test/mock-run.sh` has no `oc-mirror`, `htpasswd` or registry shim, so it exercises the connected path only. What CI *does* cover is `test-render.yml`, which renders `install-config.yaml.j2` in both modes and parses the result back — that catches the indentation of the embedded PEM block, which renders fine and fails at install time if it is off by a space. Adding the shims is the obvious next step if this path gets used in anger.
 - **Idempotency guard on bastion setup**: `helper_node.sh` writes `/etc/helper_node_setup_info` on completion; `01-infra-bastion.yml` skips the block if that file exists.
 - **ISO handoff**: the Agent ISO is generated on **localhost** (not the bastion) by `openshift-install agent create image` into `sno_manifests_dir`, then copied to `sno_tf_dir`; the master VM references it as a local file path in its disk block.
+- **A disconnected cluster network is isolated, not NATed.** `infra.tf.j2` renders `sno_network` with `mode = "none"` when `sno_disconnected` is true. Under NAT the node reached quay.io directly (verified on a live run: `curl https://quay.io/v2/` from the node answered `401`), so a gap in the mirror was silently papered over by an upstream pull. Isolated mode keeps the host on the bridge at `sno_gateway` — the node's default route still has a next hop, which OVN-Kubernetes needs, and the host still reaches the VIPs — but libvirt forwards nothing off it. The bastion's own default route on that NIC (metric 101) becomes dead but harmless; its egress is the management NIC (metric 100). `test-render.yml` asserts the mode follows the flag.
 - **Bastion cluster NIC**: assigned a static IP via cloud-init network config in `bastion.tf.j2`; `helper_node.sh` then adds the api/ingress VIPs as additional addresses via `nmcli`.
 - **Bastion kubeconfig lives at the bastion user's `~/.kube/config`** (default user `redhat`), copied there by `02-create-sno-cluster.yml` — *not* `/root/kubeconfig`, and there is no `KUBECONFIG` env var. `oc`/`kubectl` find it via the default path. **Anything that runs `oc` on the bastion must run as the bastion user, not root** — root has no kubeconfig. `test/test-console.sh` uses `sudo -iu "$BASTION_USER"` for this reason; do not change it to `sudo -i` (root). The `oc`/`openshift-install` binaries are in `/usr/local/bin` (on the login PATH).
 

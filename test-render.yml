@@ -170,3 +170,35 @@
         fail_msg: "The ImageSetConfiguration is wrong: {{ _isc }}"
       vars:
         _isc: "{{ _rendered_yaml.results[2].content | b64decode | from_yaml }}"
+
+    # Rendered under a non-.tf name: next to infra.tf it would redeclare every
+    # resource and break `tofu validate`. The point is the network mode — under
+    # "nat" a disconnected node can still reach quay.io, so a gap in the mirror
+    # passes silently instead of failing the install.
+    - name: Render infra.tf (disconnected)
+      ansible.builtin.template:
+        src: templates/infra.tf.j2
+        dest: /tmp/sno-rendered/infra-disconnected.tf.txt
+        mode: "0644"
+      vars:
+        sno_disconnected: true
+
+    - name: Read back both infra renders
+      ansible.builtin.slurp:
+        src: "/tmp/sno-rendered/{{ item }}"
+      register: _rendered_infra
+      loop:
+        - infra.tf
+        - infra-disconnected.tf.txt
+
+    - name: Assert only the disconnected cluster network is isolated
+      ansible.builtin.assert:
+        that:
+          - _connected is search('"' ~ sno_prefix ~ '_network"[^}]*mode\s+=\s+"nat"')
+          - _disconnected is search('"' ~ sno_prefix ~ '_network"[^}]*mode\s+=\s+"none"')
+          # The management network must keep NAT: it is the bastion's egress.
+          - _disconnected is search('"default_network"[^}]*mode\s+=\s+"nat"')
+        fail_msg: "The cluster network mode does not follow sno_disconnected"
+      vars:
+        _connected: "{{ _rendered_infra.results[0].content | b64decode }}"
+        _disconnected: "{{ _rendered_infra.results[1].content | b64decode }}"

@@ -426,6 +426,16 @@ that is cut off. That covers the usual "the cluster must not egress" requirement
 without the extra machinery of a fully air-gapped build host (local dnf repos,
 media handoff, offline collections) — see the note at the end of this section.
 
+The cut-off is enforced, not just configured: the cluster network
+(`sno_network`) switches from libvirt NAT to an **isolated** network, so the
+node has no route off the bridge at all. Without that it could still reach
+quay.io directly, and an image missing from the mirror would be pulled from
+upstream instead of failing the install — the lab would look disconnected
+while proving nothing. The host keeps its address on that bridge, so `02`'s
+`wait-for` and the `03` proxy reach the VIPs as before. Flipping
+`sno_disconnected` on an existing lab makes OpenTofu replace that network, so
+tear down first.
+
 ```yaml
 # vars.yml
 sno_disconnected: true
