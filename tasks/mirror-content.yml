@@ -50,6 +50,15 @@
   become: true
   changed_when: false
 
+# oc-mirror is dynamically linked against libgpgme.so.11. RHEL/CentOS 9 ship it
+# in gpgme, but Fedora 44 moved gpgme to 2.x (libgpgme.so.45) and only
+# compat-gpgme124 still provides .so.11 — so ask for the soname, not a package.
+- name: Install the gpgme library oc-mirror links against
+  ansible.builtin.dnf:
+    name: "libgpgme.so.11()(64bit)"
+    state: present
+  become: true
+
 - name: Download the oc-mirror tarball
   ansible.builtin.get_url:
     url: "{{ sno_oc_mirror_url }}"
@@ -63,6 +72,13 @@
     include:
       - oc-mirror
     creates: "{{ sno_mirror_dir }}/oc-mirror"
+
+# Unlike openshift-install, the oc-mirror tarball ships the binary without an
+# execute bit (0640), so the mirror run below fails with EACCES without this.
+- name: Make the oc-mirror binary executable
+  ansible.builtin.file:
+    path: "{{ sno_mirror_dir }}/oc-mirror"
+    mode: '0755'
 
 - name: Render the ImageSetConfiguration
   ansible.builtin.template:
@@ -83,11 +99,14 @@
     cmd: >-
       {{ sno_mirror_dir }}/oc-mirror --v2
       --config {{ sno_mirror_dir }}/imageset-config.yaml
+      --authfile {{ sno_mirror_dir }}/containers/auth.json
       --workspace file://{{ sno_mirror_dir }}
       docker://{{ sno_mirror_registry }}
+  # No REGISTRY_AUTH_FILE here: oc-mirror embeds a distribution registry, which
+  # treats every REGISTRY_* variable as a config override, fails to parse it,
+  # and panics with "StorageDriver not registered". Hence --authfile.
   environment:
     XDG_RUNTIME_DIR: "{{ sno_mirror_dir }}"
-    REGISTRY_AUTH_FILE: "{{ sno_mirror_dir }}/containers/auth.json"
   changed_when: true
 
 - name: Verify the release payload reached the registry
