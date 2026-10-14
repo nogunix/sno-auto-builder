@@ -77,7 +77,12 @@ dnf install -y chrony
 cp /etc/chrony.conf /etc/chrony.conf.org
 sed -i -e "s|#allow 192.168.0.0/16|allow 192.168.0.0/16|" /etc/chrony.conf
 
-systemctl enable --now chronyd
+# restart, not enable --now: the cloud image already runs chronyd from boot,
+# so --now is a no-op and the allow line above never takes effect. The
+# bastion then serves no NTP, and the node (agent-config's only reachable
+# source) never syncs.
+systemctl enable chronyd
+systemctl restart chronyd
 firewall-cmd --zone=public --add-service=ntp --permanent
 firewall-cmd --reload
 
