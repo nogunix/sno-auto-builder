@@ -41,6 +41,17 @@
       failed_when: false
       changed_when: false
 
+    # Stop it first: `virsh undefine` on a *running* domain only makes it
+    # transient — it keeps running under the same name, and the apply below
+    # then fails with "domain 'sno01_master0' already exists". Re-running 02
+    # against a live master (the documented way to recreate it) hit exactly
+    # that. Fails harmlessly when the domain is absent or already shut off.
+    - name: Stop the SNO master domain if it is running
+      ansible.builtin.command:
+        cmd: virsh -c qemu:///system destroy {{ sno_prefix }}_master0
+      failed_when: false
+      changed_when: false
+
     - name: Undefine SNO master domain from libvirt if it already exists
       ansible.builtin.command:
         cmd: virsh -c qemu:///system undefine --nvram {{ sno_prefix }}_master0

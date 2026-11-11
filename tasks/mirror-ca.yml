@@ -102,6 +102,12 @@
       -addext "keyUsage=critical,keyCertSign,cRLSign"
     creates: "{{ sno_mirror_dir }}/ca.crt"
 
+# authorityKeyIdentifier is not optional either. Python 3.13+ verifies with
+# VERIFY_X509_STRICT by default and rejects a leaf without it — "certificate
+# verify failed: Missing Authority Key Identifier" — so the `uri` check in
+# tasks/mirror-content.yml fails against a registry that curl, podman and
+# oc-mirror (Go) all accept. Seen on a live run on Fedora 45 (Python 3.15),
+# after a successful 15-minute mirror.
 - name: Write the registry certificate extensions
   ansible.builtin.copy:
     dest: "{{ sno_mirror_dir }}/registry.ext"
@@ -113,7 +119,15 @@
       basicConstraints = CA:FALSE
       keyUsage = critical, digitalSignature, keyEncipherment
       extendedKeyUsage = serverAuth
+      subjectKeyIdentifier = hash
+      authorityKeyIdentifier = keyid,issuer
       subjectAltName = DNS:{{ sno_mirror_registry_host }}, IP:{{ sno_proxy_ip }}
+  register: _sno_registry_ext
+
+- name: Check for an existing registry certificate
+  ansible.builtin.stat:
+    path: "{{ sno_mirror_dir }}/registry.crt"
+  register: _sno_registry_crt
 
 - name: Generate the registry key and CSR
   ansible.builtin.command:
@@ -124,6 +138,11 @@
       -subj "/CN={{ sno_mirror_registry_host }}"
     creates: "{{ sno_mirror_dir }}/registry.csr"
 
+# Re-signed whenever the extensions change, not only when the file is missing:
+# a `creates:` guard alone would keep a certificate issued from an older
+# registry.ext forever, so a fix to the extensions would never reach a lab
+# that already has one. The key and CA stay; the bastion play copies the new
+# certificate over and its handler restarts the registry.
 - name: Sign the registry certificate
   ansible.builtin.command:
     cmd: >-
@@ -134,7 +153,8 @@
       -CAcreateserial
       -extfile {{ sno_mirror_dir }}/registry.ext
       -out {{ sno_mirror_dir }}/registry.crt
-    creates: "{{ sno_mirror_dir }}/registry.crt"
+  when: _sno_registry_ext is changed or not _sno_registry_crt.stat.exists
+  changed_when: true
 
 - name: Restrict the private keys
   ansible.builtin.file:
