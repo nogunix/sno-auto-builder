@@ -108,6 +108,19 @@
         sno_disconnected: true
         _sno_mirror_ca_cert: "{{ _ci_fake_ca }}"
 
+    # Same template pinned to a 4.x release. The component repository is named
+    # after the major version (ocp-v4.0-art-dev vs ocp-v5.0-art-dev), and a
+    # source that does not match it sends every component pull to quay.io.
+    - name: Render install-config.yaml (disconnected, 4.x pin)
+      ansible.builtin.template:
+        src: templates/install-config.yaml.j2
+        dest: /tmp/sno-rendered/install-config-disconnected-4x.yaml
+        mode: "0644"
+      vars:
+        sno_disconnected: true
+        sno_mirror_max_version: "4.22.22"
+        _sno_mirror_ca_cert: "{{ _ci_fake_ca }}"
+
     - name: Render the ImageSetConfiguration
       ansible.builtin.template:
         src: templates/imageset-config.yaml.j2
@@ -115,7 +128,7 @@
         mode: "0644"
       vars:
         sno_mirror_operators:
-          - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.20
+          - catalog: registry.redhat.io/redhat/redhat-operator-index:v5.0
             packages:
               - name: local-storage-operator
         sno_mirror_additional_images:
@@ -136,6 +149,7 @@
         - install-config-disconnected.yaml
         - imageset-config.yaml
         - agent-config.yaml
+        - install-config-disconnected-4x.yaml
 
     - name: Assert the connected install-config still proxies and does not mirror
       ansible.builtin.assert:
@@ -157,9 +171,20 @@
           - "'BEGIN CERTIFICATE' in _ic.additionalTrustBundle"
           - _ic.imageDigestSources | length == 2
           - _ic.imageDigestSources[0].mirrors[0] is search(':8443/openshift/release-images$')
+          - >-
+            _ic.imageDigestSources[1].source ==
+            'quay.io/openshift-release-dev/ocp-v' ~ sno_mirror_max_version.split('.')[0] ~ '.0-art-dev'
         fail_msg: "The disconnected install-config is wrong: {{ _ic }}"
       vars:
         _ic: "{{ _rendered_yaml.results[1].content | b64decode | from_yaml }}"
+
+    - name: Assert a 4.x pin maps the 4.x component repository
+      ansible.builtin.assert:
+        that:
+          - _ic.imageDigestSources[1].source == 'quay.io/openshift-release-dev/ocp-v4.0-art-dev'
+        fail_msg: "A 4.x pin produced {{ _ic.imageDigestSources }}"
+      vars:
+        _ic: "{{ _rendered_yaml.results[4].content | b64decode | from_yaml }}"
 
     - name: Assert the ImageSetConfiguration is the v2 schema and pinned
       ansible.builtin.assert:
