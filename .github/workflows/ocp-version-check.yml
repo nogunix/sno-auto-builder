@@ -15,63 +15,36 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Fetch latest stable OCP version
-        id: version
-        run: |
-          VERSION=$(curl -sSf \
-            "https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/release.txt" \
-            | grep -oP 'Version:\s*\K[\d.]+')
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "Detected stable OCP version: ${VERSION}"
-
-      - name: Fetch latest stable-4.20 OCP version
-        id: version_420
-        run: |
-          VERSION=$(curl -sSf \
-            "https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable-4.20/release.txt" \
-            | grep -oP 'Version:\s*\K[\d.]+')
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "Detected stable-4.20 OCP version: ${VERSION}"
-
-      - name: Check download URLs (stable)
+      # "stable" follows the newest GA (5.x since 5.0.1); stable-5.0 and
+      # stable-4.22 are the pins vars.yml suggests. 5.x clients are published
+      # under openshift-v4/ too, so one base URL covers both majors.
+      #
+      # oc-mirror is checked separately and at the version vars.yml actually
+      # uses (sno_oc_mirror_version): 5.0 ships no oc-mirror.tar.gz, so it is
+      # deliberately not tied to the installer channel.
+      - name: Check versions and download URLs
         id: urls
         run: |
-          BASE="https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable"
-          FAILED=()
-          for FILE in \
-            openshift-client-linux.tar.gz \
-            openshift-install-linux.tar.gz; do
-            URL="${BASE}/${FILE}"
-            STATUS=$(curl -sSo /dev/null -w "%{http_code}" --head "${URL}")
-            echo "${STATUS} ${URL}"
-            if [[ "${STATUS}" != "200" ]]; then
-              FAILED+=("${URL} (HTTP ${STATUS})")
-            fi
+          BASE="https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp"
+          OC_MIRROR_VERSION=$(grep -oP '^sno_oc_mirror_version:\s*"\K[^"]+' vars.yml)
+          : > /tmp/versions.txt
+          : > /tmp/failed_urls.txt
+          for CHANNEL in stable stable-5.0 stable-4.22; do
+            VERSION=$(curl -sSf "${BASE}/${CHANNEL}/release.txt" \
+              | grep -oP 'Version:\s*\K[\d.]+' || echo "unknown")
+            echo "${CHANNEL}: ${VERSION}" | tee -a /tmp/versions.txt
+            for FILE in openshift-client-linux.tar.gz openshift-install-linux.tar.gz; do
+              URL="${BASE}/${CHANNEL}/${FILE}"
+              STATUS=$(curl -sSo /dev/null -w "%{http_code}" --head "${URL}")
+              echo "${STATUS} ${URL}"
+              [[ "${STATUS}" == "200" ]] || echo "${URL} (HTTP ${STATUS})" >> /tmp/failed_urls.txt
+            done
           done
-          if [[ ${#FAILED[@]} -gt 0 ]]; then
-            printf '%s\n' "${FAILED[@]}" > /tmp/failed_urls.txt
-            echo "failed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "failed=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Check download URLs (stable-4.20)
-        id: urls_420
-        run: |
-          BASE="https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable-4.20"
-          FAILED=()
-          for FILE in \
-            openshift-client-linux.tar.gz \
-            openshift-install-linux.tar.gz; do
-            URL="${BASE}/${FILE}"
-            STATUS=$(curl -sSo /dev/null -w "%{http_code}" --head "${URL}")
-            echo "${STATUS} ${URL}"
-            if [[ "${STATUS}" != "200" ]]; then
-              FAILED+=("${URL} (HTTP ${STATUS})")
-            fi
-          done
-          if [[ ${#FAILED[@]} -gt 0 ]]; then
-            printf '%s\n' "${FAILED[@]}" > /tmp/failed_urls_420.txt
+          URL="${BASE}/${OC_MIRROR_VERSION}/oc-mirror.tar.gz"
+          STATUS=$(curl -sSo /dev/null -w "%{http_code}" --head "${URL}")
+          echo "${STATUS} ${URL}"
+          [[ "${STATUS}" == "200" ]] || echo "${URL} (HTTP ${STATUS})" >> /tmp/failed_urls.txt
+          if [[ -s /tmp/failed_urls.txt ]]; then
             echo "failed=true" >> "$GITHUB_OUTPUT"
           else
             echo "failed=false" >> "$GITHUB_OUTPUT"
@@ -83,39 +56,30 @@ jobs:
         continue-on-error: true
 
       - name: Open issue on failure
-        if: steps.urls.outputs.failed == 'true' || steps.urls_420.outputs.failed == 'true' || steps.lint.outcome == 'failure'
+        if: steps.urls.outputs.failed == 'true' || steps.lint.outcome == 'failure'
         uses: actions/github-script@v7
         with:
           script: |
-            const version = '${{ steps.version.outputs.version }}';
-            const version420 = '${{ steps.version_420.outputs.version }}';
+            const fs = require('fs');
+            const versions = fs.readFileSync('/tmp/versions.txt', 'utf8').trim();
             const urlFailed = '${{ steps.urls.outputs.failed }}' === 'true';
-            const url420Failed = '${{ steps.urls_420.outputs.failed }}' === 'true';
             const lintFailed = '${{ steps.lint.outcome }}' === 'failure';
+            const stable = (versions.match(/^stable: (.*)$/m) || [])[1] || 'unknown';
 
             const lines = [
               `## OCP Version Check Failed`,
               ``,
-              `**Detected stable version:** \`${version}\``,
-              `**Detected stable-4.20 version:** \`${version420}\``,
+              `**Detected versions:**`,
+              '```',
+              versions,
+              '```',
               `**Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`,
               ``,
             ];
 
             if (urlFailed) {
-              const fs = require('fs');
               const urls = fs.readFileSync('/tmp/failed_urls.txt', 'utf8').trim();
-              lines.push(`### Download URLs unreachable (stable)`);
-              lines.push('```');
-              lines.push(urls);
-              lines.push('```');
-              lines.push('');
-            }
-
-            if (url420Failed) {
-              const fs = require('fs');
-              const urls = fs.readFileSync('/tmp/failed_urls_420.txt', 'utf8').trim();
-              lines.push(`### Download URLs unreachable (stable-4.20)`);
+              lines.push(`### Download URLs unreachable`);
               lines.push('```');
               lines.push(urls);
               lines.push('```');
@@ -145,7 +109,7 @@ jobs:
               await github.rest.issues.create({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                title: `OCP version check failed (stable: ${version}, stable-4.20: ${version420})`,
+                title: `OCP version check failed (stable: ${stable})`,
                 body: lines.join('\n'),
                 labels: ['ocp-version-check'],
               });

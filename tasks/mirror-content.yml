@@ -137,3 +137,41 @@
       The registry has no tags under openshift/release-images. oc-mirror
       reported success but pushed nothing usable — check
       {{ sno_mirror_dir }}/working-dir/logs/ before starting the install.
+
+# oc-mirror writes the source → mirror mapping it actually used. If
+# install-config's imageDigestSources misses one of those sources, the node
+# pulls that repository from upstream: a connected-looking install on NAT, and a
+# hard failure on the isolated network an hour into 02. This is exactly what a
+# 4.x → 5.x bump did (ocp-v4.0-art-dev became ocp-v5.0-art-dev), so check it
+# here, before the ISO is built, rather than trust vars.yml to keep up.
+#
+# Only the release payload's repositories (quay.io/openshift-release-dev/) are
+# checked. Operator catalogs and sno_mirror_additional_images also land in this
+# file, but wiring those up is a documented day-2 `oc apply`, not something
+# install-config is meant to carry.
+- name: Read the mirror sets oc-mirror generated
+  ansible.builtin.slurp:
+    src: "{{ sno_mirror_dir }}/working-dir/cluster-resources/idms-oc-mirror.yaml"
+  register: _sno_mirror_idms
+
+- name: Assert imageDigestSources covers every mirrored repository
+  vars:
+    _sno_idms_sources: >-
+      {{ _sno_mirror_idms.content | b64decode | from_yaml_all
+         | selectattr('kind', 'defined')
+         | selectattr('kind', 'equalto', 'ImageDigestMirrorSet')
+         | map(attribute='spec.imageDigestMirrors') | flatten
+         | map(attribute='source')
+         | select('match', 'quay\.io/openshift-release-dev/')
+         | unique | list }}
+    _sno_configured_sources: "{{ sno_mirror_image_sources | map(attribute='source') | list }}"
+  ansible.builtin.assert:
+    that:
+      - _sno_idms_sources | length > 0
+      - _sno_idms_sources | difference(_sno_configured_sources) | length == 0
+    fail_msg: >-
+      oc-mirror mirrored {{ _sno_idms_sources | difference(_sno_configured_sources) }}
+      but sno_mirror_image_sources does not map it, so the node would try to pull
+      it from upstream. Add it to sno_mirror_image_sources in vars.yml, using
+      {{ sno_mirror_dir }}/working-dir/cluster-resources/idms-oc-mirror.yaml as
+      the reference.

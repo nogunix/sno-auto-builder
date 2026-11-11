@@ -14,7 +14,10 @@ sno_base_dir: "{{ lookup('env', 'HOME') }}/sno-lab"
 sno_pool_dir: "{{ sno_base_dir }}/pool"
 sno_tf_dir: "{{ sno_base_dir }}/work"
 
-# [CHANGE] OpenShift Version — pin to a specific release, e.g. "stable-4.22"
+# [CHANGE] OpenShift Version — pin to a specific release, e.g. "stable-5.0" or
+#          "stable-4.22". "stable" follows the newest GA, which is 5.x since
+#          5.0.1; 5.x clients are still published under openshift-v4/ on
+#          mirror.openshift.com, so the URLs below cover both majors.
 # Pull secret — download from https://console.redhat.com/openshift/install/pull-secret
 sno_cluster_version: "stable"
 sno_pull_secret_path: "{{ lookup('env', 'HOME') }}/openshift-pull-secret/openshift-pull-secret.txt"
@@ -119,7 +122,14 @@ sno_mirror_min_bastion_disk: 100
 # that 99-destroy-all.yml reclaims them with sno_base_dir.
 sno_mirror_min_host_disk: 60
 
-sno_oc_mirror_url: "https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ sno_cluster_version }}/oc-mirror.tar.gz"
+# oc-mirror is fetched from its own client directory, deliberately decoupled
+# from sno_cluster_version: 5.0.x publishes no oc-mirror.tar.gz at all (404 on
+# 5.0.1, latest-5.0 and openshift-v5/), so deriving the URL from the installer
+# version breaks every disconnected 5.x run. oc-mirror v2 from 4.22 resolves
+# and mirrors a 5.0 payload (checked with a --dry-run of stable-5.0 / 5.0.1).
+# Move this to a 5.x directory once one ships oc-mirror.
+sno_oc_mirror_version: "stable-4.22"
+sno_oc_mirror_url: "https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ sno_oc_mirror_version }}/oc-mirror.tar.gz"
 
 # What to mirror. Pin exact versions: "stable" moves, and a moving target makes
 # oc-mirror re-resolve (and the cluster's mirrored payload drift from the
@@ -127,12 +137,12 @@ sno_oc_mirror_url: "https://mirror.openshift.com/pub/openshift-v4/x86_64/clients
 # Mirror the Cincinnati graph image too. Only needed to drive in-cluster
 # upgrades via OSUS; it costs an extra api.openshift.com fetch and build step.
 sno_mirror_graph: false
-sno_mirror_channel: "stable-4.20"
-sno_mirror_min_version: "4.20.0"
-sno_mirror_max_version: "4.20.0"
+sno_mirror_channel: "stable-5.0"
+sno_mirror_min_version: "5.0.1"
+sno_mirror_max_version: "5.0.1"
 # Optional extras, e.g.
 #   sno_mirror_operators:
-#     - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.20
+#     - catalog: registry.redhat.io/redhat/redhat-operator-index:v5.0
 #       packages: [{name: local-storage-operator}]
 sno_mirror_operators: []
 sno_mirror_additional_images: []
@@ -141,12 +151,19 @@ sno_mirror_additional_images: []
 # These two paths are oc-mirror v2's layout. oc-mirror also writes the
 # authoritative version to
 #   {{ sno_mirror_dir }}/working-dir/cluster-resources/idms-oc-mirror.yaml
-# after a successful run — compare against it if image pulls fail on the node.
+# after a successful run; tasks/mirror-content.yml asserts that every source in
+# it is covered here before the ISO is built.
+#
+# The component repository is named after the *major* version: every 4.x
+# release keeps its images in ocp-v4.0-art-dev, but 5.0 moved them to
+# ocp-v5.0-art-dev. A hard-coded v4.0 source leaves all 5.x component pulls
+# unmapped, so the node goes to quay.io — which an isolated network cannot
+# reach. Hence derived from sno_mirror_max_version.
 sno_mirror_image_sources:
   - source: quay.io/openshift-release-dev/ocp-release
     mirrors:
       - "{{ sno_mirror_registry }}/openshift/release-images"
-  - source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
+  - source: "quay.io/openshift-release-dev/ocp-v{{ sno_mirror_max_version.split('.')[0] }}.0-art-dev"
     mirrors:
       - "{{ sno_mirror_registry }}/openshift/release"
 

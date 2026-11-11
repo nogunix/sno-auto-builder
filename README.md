@@ -441,23 +441,23 @@ tear down first.
 ```yaml
 # vars.yml
 sno_disconnected: true
-sno_cluster_version: "4.20.0"        # must equal sno_mirror_max_version
+sno_cluster_version: "5.0.1"         # must equal sno_mirror_max_version
 sno_bastion_disk_size: 100     # the mirrored payload lands on the bastion
-sno_mirror_channel: "stable-4.20"
-sno_mirror_min_version: "4.20.0"
-sno_mirror_max_version: "4.20.0"
+sno_mirror_channel: "stable-5.0"
+sno_mirror_min_version: "5.0.1"
+sno_mirror_max_version: "5.0.1"
 sno_mirror_registry_password: "..."   # ansible-vault this
 ```
 
 **`sno_cluster_version` is not optional here.** It selects the
 `openshift-install` binary that builds the agent ISO, and the node installs
 whatever that binary resolves to. Leave it at the default `stable` while the
-mirror is pinned to 4.20.0 and the node asks the registry for a release that
+mirror is pinned to 5.0.1 and the node asks the registry for a release that
 was never pushed: the install fails ~an hour in with `manifest unknown`, then
 falls back to quay.io, which it cannot reach
 ([solution 7111547](https://access.redhat.com/solutions/7111547)). A stream
-with the right minor is not enough either — `stable-4.20` resolves to the
-newest 4.20.z, not to 4.20.0 — so pin the exact version. A preflight assert
+with the right minor is not enough either — `stable-5.0` resolves to the
+newest 5.0.z, not to 5.0.1 — so pin the exact version. A preflight assert
 requires `sno_cluster_version` to equal `sno_mirror_max_version` and stops the
 run in seconds otherwise. The host also
 needs ≥ `sno_mirror_min_host_disk` (60 GB) free under `sno_base_dir` for
@@ -481,6 +481,17 @@ Then run `01-infra-bastion.yml` as usual — the mirror stages are part of it:
 and `additionalTrustBundlePolicy: Always`, and the agent ISO is built from the
 mirrored payload.
 
+**OpenShift 5.x notes.** Two things differ from 4.x, and both are handled:
+
+- 5.0 publishes no `oc-mirror.tar.gz` on mirror.openshift.com, so `oc-mirror`
+  comes from `sno_oc_mirror_version` (default `stable-4.22`) rather than from
+  `sno_cluster_version`. That build mirrors a 5.0 payload fine.
+- 5.x component images live in `ocp-v5.0-art-dev`, not `ocp-v4.0-art-dev`.
+  `sno_mirror_image_sources` derives the repository from
+  `sno_mirror_max_version`, and after mirroring, a check compares it with the
+  `ImageDigestMirrorSet` oc-mirror generated, so a gap stops `01` instead of
+  surfacing an hour into `02`.
+
 **Budget for it.** Mirroring pulls roughly 20 GB and pushes it to the bastion,
 so a first run adds **30–60 minutes** to playbook `01` depending on your link,
 and the bastion needs **≥ 100 GB** of disk. The volume is thin-provisioned
@@ -492,7 +503,7 @@ To mirror operators as well, fill in `sno_mirror_operators`:
 
 ```yaml
 sno_mirror_operators:
-  - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.20
+  - catalog: registry.redhat.io/redhat/redhat-operator-index:v5.0
     packages:
       - name: local-storage-operator
 ```
@@ -548,8 +559,8 @@ ISO generation and installation monitoring are handled directly by `openshift-in
 This project provides the cluster-specific configuration (`install-config.yaml.j2`, `agent-config.yaml.j2`) and the libvirt infrastructure (bastion VM, networks, SNO master VM).
 
 **Official documentation:**
-- [Installing on a single node (SNO)](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html-single/installing_on_a_single_node/index)
-- [Agent-based Installer](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html-single/installing_an_on-premise_cluster_with_the_agent-based_installer/index)
+- [Installing on a single node (SNO)](https://docs.redhat.com/en/documentation/openshift_container_platform/5.0/html-single/installing_on_a_single_node/index)
+- [Agent-based Installer](https://docs.redhat.com/en/documentation/openshift_container_platform/5.0/html-single/installing_an_on-premise_cluster_with_the_agent-based_installer/index)
 
 ```
 Host (localhost)
