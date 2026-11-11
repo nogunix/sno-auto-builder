@@ -318,6 +318,29 @@
                       [Install]
                       WantedBy=sysinit.target
 
+    # Disconnected only: start the Cluster Samples Operator as Removed. Without
+    # a Config it bootstraps by dialling registry.redhat.io for 5 minutes, and
+    # on an isolated network it runs that loop twice before falling back to
+    # Removed. Those ~10 minutes only start once openshift-apiserver is up, so
+    # on a live 5.0.1 run they pushed openshift-samples (and with it
+    # `wait-for install-complete`) ~2 minutes past the 40-minute limit on an
+    # otherwise healthy cluster. With a Config present at startup the operator
+    # skips the check entirely (cluster-samples-operator pkg/stub/handler.go,
+    # same in release-4.22 and release-5.0). The samples could not import
+    # anything without registry.redhat.io anyway.
+    - name: Start the Cluster Samples Operator as Removed (disconnected)
+      ansible.builtin.copy:
+        dest: "{{ sno_manifests_dir }}/openshift/99-samples-removed.yaml"
+        mode: '0644'
+        content: |
+          apiVersion: samples.operator.openshift.io/v1
+          kind: Config
+          metadata:
+            name: cluster
+          spec:
+            managementState: Removed
+      when: sno_disconnected | bool
+
     # Built as a dict rather than inline so the release override can be absent
     # entirely: openshift-install treats an empty
     # OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE as a value, not as unset.
