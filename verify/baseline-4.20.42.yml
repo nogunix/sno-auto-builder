@@ -1,0 +1,9 @@
+---
+# Baseline: repo default disconnected flow (registry:2 + m2m) pinned to 4.20.42
+sno_disconnected: true
+sno_cluster_version: "4.20.42"
+sno_bastion_disk_size: 150
+sno_mirror_channel: "stable-4.20"
+sno_mirror_min_version: "4.20.42"
+sno_mirror_max_version: "4.20.42"
+sno_oc_mirror_version: "4.22.18"
