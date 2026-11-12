@@ -6,13 +6,7 @@
   vars_files:
     - vars.yml
   vars:
-    sno_base_dir: /tmp/sno-rendered
-    sno_pool_dir: /tmp/sno-rendered/pool
-    sno_tf_dir: /tmp/sno-rendered
-    sno_installer_path: /tmp/sno-rendered/openshift-install
-    sno_manifests_dir: /tmp/sno-rendered/generated/ocp4
     _sno_ssh_pubkey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForCITesting ci@github-actions"
-    sno_mirror_dir: /tmp/sno-rendered/mirror
     # Only has to look like a PEM: this exercises the indentation of the
     # additionalTrustBundle block, not certificate parsing.
     _ci_fake_ca: |-
@@ -20,6 +14,18 @@
       MIIBfakeCertificateForCITestingOnlyNotARealKeyAtAll
       -----END CERTIFICATE-----
   tasks:
+    # set_fact, not play `vars:`: vars_files outranks play vars, so these
+    # overrides were silently ignored and the rendered files carried
+    # vars.yml's ~/sno-lab paths.
+    - name: Point every path at the scratch directory
+      ansible.builtin.set_fact:
+        sno_base_dir: /tmp/sno-rendered
+        sno_pool_dir: /tmp/sno-rendered/pool
+        sno_tf_dir: /tmp/sno-rendered
+        sno_installer_path: /tmp/sno-rendered/openshift-install
+        sno_manifests_dir: /tmp/sno-rendered/generated/ocp4
+        sno_mirror_dir: /tmp/sno-rendered/mirror
+
     - name: Create output directory
       ansible.builtin.file:
         path: /tmp/sno-rendered
