@@ -1,0 +1,343 @@
+---
+# Day-2 for the bare-metal-like layout (sno_master_layout: baremetal).
+#
+# Exercises day-2 configuration for a disconnected bare-metal cluster:
+#   - apply the oc-mirror cluster resources by name, trust the mirror CA
+#     cluster-wide, compare ITMS and IDMS sources
+#   - Kubernetes NMState Operator from the mirrored catalog
+#   - NMState policy: storage NIC + static route to the storage target subnet,
+#     management VLAN on the bond
+#   - an iSCSI target on the bastion, reachable only over the storage segment,
+#     and an iSCSI login from the node
+#
+# Tags: catalog, nmstate, nncp, iscsi-target, iscsi-test
+- name: SNO day 2 - prerequisites
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - vars.yml
+  tags: always
+  tasks:
+    - name: Assert the bare-metal-like layout is in use
+      ansible.builtin.assert:
+        that:
+          - sno_master_layout == 'baremetal'
+          - sno_disconnected | bool
+        fail_msg: 05-baremetal-day2.yml needs sno_master_layout=baremetal and sno_disconnected=true.
+
+    - name: Read bastion IP from the OpenTofu output
+      ansible.builtin.command:
+        cmd: tofu output -raw bastion_ip
+        chdir: "{{ sno_tf_dir }}"
+      register: tf_bastion_ip
+      changed_when: false
+
+    - name: Add bastion to inventory
+      ansible.builtin.add_host:
+        name: bastion_server
+        ansible_host: "{{ tf_bastion_ip.stdout | trim }}"
+        ansible_user: "{{ sno_bastion_user }}"
+        ansible_password: "{{ sno_bastion_password }}"
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      no_log: true
+
+- name: SNO day 2 - mirrored catalog and cluster-wide CA (guide §6)
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - vars.yml
+  tags: catalog
+  environment:
+    KUBECONFIG: "{{ sno_manifests_dir }}/auth/kubeconfig"
+  vars:
+    _res: "{{ sno_mirror_dir }}/working-dir/cluster-resources"
+  tasks:
+    - name: Find the CatalogSource manifests oc-mirror generated
+      ansible.builtin.find:
+        paths: "{{ _res }}"
+        patterns: "cs-*.yaml"
+      register: _sno_cs_files
+
+    - name: Find the optional ITMS manifest
+      ansible.builtin.stat:
+        path: "{{ _res }}/itms-oc-mirror.yaml"
+      register: _sno_itms
+
+    # §6.2: name the files; never `oc apply -f` the whole directory (cc-*.yaml
+    # are OLM v1 ClusterCatalogs).
+    - name: Apply IDMS, ITMS and CatalogSources by name
+      ansible.builtin.command:
+        cmd: >-
+          oc apply -f {{ _res }}/idms-oc-mirror.yaml
+          {{ ('-f ' ~ _res ~ '/itms-oc-mirror.yaml') if _sno_itms.stat.exists else '' }}
+          {% for _f in _sno_cs_files.files %}-f {{ _f.path }} {% endfor %}
+      register: _sno_apply
+      changed_when: "'created' in _sno_apply.stdout or 'configured' in _sno_apply.stdout"
+
+    # §6.3: key format is <host>..<port>.
+    - name: Create the registry-cas ConfigMap
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail;
+          oc create configmap registry-cas -n openshift-config
+          --from-file={{ sno_mirror_registry_host }}..{{ sno_mirror_registry_port }}={{ sno_mirror_dir }}/ca.crt
+          --dry-run=client -o yaml | oc apply -f -
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Point image.config at registry-cas
+      ansible.builtin.command:
+        cmd: >-
+          oc patch image.config.openshift.io/cluster --type=merge
+          --patch '{"spec":{"additionalTrustedCA":{"name":"registry-cas"}}}'
+      changed_when: true
+
+    # §6.4
+    - name: Compare ITMS and IDMS sources
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail;
+          oc get imagedigestmirrorset -o jsonpath='{range .items[*].spec.imageDigestMirrors[*]}{.source}{"\n"}{end}' | sort -u > /tmp/idms-sources;
+          oc get imagetagmirrorset -o jsonpath='{range .items[*].spec.imageTagMirrors[*]}{.source}{"\n"}{end}' | sort -u > /tmp/itms-sources;
+          echo "ITMS-only:"; comm -13 /tmp/idms-sources /tmp/itms-sources
+      args:
+        executable: /bin/bash
+      register: _sno_mirror_diff
+      changed_when: false
+
+    - name: Show the ITMS-only sources
+      ansible.builtin.debug:
+        var: _sno_mirror_diff.stdout_lines
+
+    - name: Wait for the mirrored CatalogSources to be READY
+      ansible.builtin.command:
+        cmd: >-
+          oc get catalogsource -n openshift-marketplace
+          -o jsonpath='{range .items[*]}{.metadata.name}={.status.connectionState.lastObservedState}{"\n"}{end}'
+      register: _sno_cs_state
+      until: _sno_cs_state.stdout_lines | length > 0 and (_sno_cs_state.stdout_lines | reject('search', '=READY$') | list | length == 0)
+      retries: 40
+      delay: 15
+      changed_when: false
+
+- name: SNO day 2 - Kubernetes NMState Operator
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - vars.yml
+  tags: nmstate
+  environment:
+    KUBECONFIG: "{{ sno_manifests_dir }}/auth/kubeconfig"
+  tasks:
+    - name: Find the redhat-operator-index CatalogSource name
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail;
+          oc get catalogsource -n openshift-marketplace -o name | grep redhat-operator-index | head -1 | cut -d/ -f2
+      args:
+        executable: /bin/bash
+      register: _sno_cs_name
+      changed_when: false
+      failed_when: _sno_cs_name.stdout | length == 0
+
+    - name: Subscribe to kubernetes-nmstate-operator
+      ansible.builtin.shell:
+        cmd: |
+          oc apply -f - <<EOF
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: openshift-nmstate
+          ---
+          apiVersion: operators.coreos.com/v1
+          kind: OperatorGroup
+          metadata:
+            name: openshift-nmstate
+            namespace: openshift-nmstate
+          spec:
+            targetNamespaces:
+              - openshift-nmstate
+          ---
+          apiVersion: operators.coreos.com/v1alpha1
+          kind: Subscription
+          metadata:
+            name: kubernetes-nmstate-operator
+            namespace: openshift-nmstate
+          spec:
+            channel: stable
+            name: kubernetes-nmstate-operator
+            source: {{ _sno_cs_name.stdout | trim }}
+            sourceNamespace: openshift-marketplace
+            installPlanApproval: Automatic
+          EOF
+      changed_when: true
+
+    - name: Wait for the NMState CSV to succeed
+      ansible.builtin.shell:
+        cmd: oc get csv -n openshift-nmstate -o jsonpath='{range .items[*]}{.metadata.name} {.status.phase}{"\n"}{end}'
+      register: _sno_nmstate_csv
+      until: "'Succeeded' in _sno_nmstate_csv.stdout"
+      retries: 60
+      delay: 15
+      changed_when: false
+
+    - name: Create the NMState instance
+      ansible.builtin.shell:
+        cmd: |
+          oc apply -f - <<EOF
+          apiVersion: nmstate.io/v1
+          kind: NMState
+          metadata:
+            name: nmstate
+          EOF
+      changed_when: true
+
+    - name: Wait for the nmstate-handler DaemonSet
+      ansible.builtin.command:
+        cmd: oc rollout status ds/nmstate-handler -n openshift-nmstate --timeout=60s
+      register: _sno_handler
+      until: _sno_handler.rc == 0
+      retries: 20
+      delay: 15
+      changed_when: false
+
+- name: SNO day 2 - iSCSI target on the storage segment (bastion)
+  hosts: bastion_server
+  gather_facts: false
+  become: true
+  vars_files:
+    - vars.yml
+  tags: iscsi-target
+  tasks:
+    # The bastion's storage NIC and VLAN are in bastion.tf.j2's cloud-init
+    # network_config, but this cloud-init rejects the whole document
+    # ("Address default is not a valid ip network", from `to: default`) and
+    # falls back to DHCP profiles; helper_node.sh only repairs the cluster
+    # NIC. So configure both here with nmcli.
+    - name: Find the bastion's storage and cluster NICs by MAC
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail;
+          echo "$(ip -o link | awk -v m={{ sno_bastion_mac_storage }} '$0 ~ m {sub(":","",$2); print $2}')
+          $(ip -o link | awk -v m={{ sno_bastion_mac_sno }} '$0 ~ m {sub(":","",$2); print $2}')"
+        executable: /bin/bash
+      register: _sno_bastion_nics
+      changed_when: false
+
+    - name: Configure the storage NIC and the management VLAN (nmcli)
+      vars:
+        _stor: "{{ _sno_bastion_nics.stdout.split()[0] }}"
+        _clus: "{{ _sno_bastion_nics.stdout.split()[1] }}"
+      ansible.builtin.shell:
+        cmd: |
+          set -e
+          nmcli -t -f NAME con show | grep -qx sno-storage || \
+            nmcli con add type ethernet ifname {{ _stor }} con-name sno-storage
+          nmcli con mod sno-storage ipv4.method manual \
+            ipv4.addresses "{{ sno_storage_router_ip }}/{{ sno_storage_network.split('/')[1] }},{{ sno_storage_target_ip }}/32" \
+            ipv6.method disabled connection.autoconnect yes
+          nmcli con up sno-storage
+          nmcli -t -f NAME con show | grep -qx sno-vlan{{ sno_mgmt_vlan_id }} || \
+            nmcli con add type vlan con-name sno-vlan{{ sno_mgmt_vlan_id }} dev {{ _clus }} id {{ sno_mgmt_vlan_id }}
+          nmcli con mod sno-vlan{{ sno_mgmt_vlan_id }} ipv4.method manual \
+            ipv4.addresses {{ sno_mgmt_vlan_bastion_ip }}/{{ sno_mgmt_vlan_network.split('/')[1] }} ipv6.method disabled
+          nmcli con up sno-vlan{{ sno_mgmt_vlan_id }}
+      changed_when: true
+
+    - name: Install targetcli
+      ansible.builtin.dnf:
+        name: targetcli
+        state: present
+
+    - name: Enable the target service (restores saveconfig on boot)
+      ansible.builtin.systemd_service:
+        name: target
+        enabled: true
+        state: started
+
+    - name: Open iSCSI on the bastion firewall
+      ansible.posix.firewalld:
+        port: 3260/tcp
+        permanent: true
+        state: enabled
+        immediate: true
+
+    - name: Check whether the target already exists
+      ansible.builtin.command:
+        cmd: targetcli ls /iscsi
+      register: _sno_tcli
+      changed_when: false
+
+    # Demo-mode ACLs (generate_node_acls) keep the node IQN out of the lab
+    # setup; the portal is bound to the target subnet address only, so the
+    # segment boundary is what is being tested, not CHAP.
+    - name: Create the iSCSI target
+      ansible.builtin.shell:
+        cmd: |
+          set -e
+          targetcli /backstores/fileio create lun0 /var/lib/sno-iscsi-lun0.img {{ sno_iscsi_lun_size }}
+          targetcli /iscsi create {{ sno_iscsi_iqn }}
+          targetcli /iscsi/{{ sno_iscsi_iqn }}/tpg1/portals delete 0.0.0.0 3260 || true
+          targetcli /iscsi/{{ sno_iscsi_iqn }}/tpg1/portals create {{ sno_storage_target_ip }} 3260
+          targetcli /iscsi/{{ sno_iscsi_iqn }}/tpg1/luns create /backstores/fileio/lun0
+          targetcli /iscsi/{{ sno_iscsi_iqn }}/tpg1 set attribute generate_node_acls=1 demo_mode_write_protect=0 authentication=0 cache_dynamic_acls=1
+          targetcli saveconfig
+      when: sno_iscsi_iqn not in _sno_tcli.stdout
+      changed_when: true
+
+- name: SNO day 2 - storage NIC, static route and management VLAN (NMState)
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - vars.yml
+  tags: nncp
+  environment:
+    KUBECONFIG: "{{ sno_manifests_dir }}/auth/kubeconfig"
+  tasks:
+    - name: Render the master NodeNetworkConfigurationPolicy
+      ansible.builtin.template:
+        src: templates/nncp-node.yaml.j2
+        dest: "{{ sno_tf_dir }}/nncp-master0.yaml"
+        mode: '0644'
+      vars:
+        _nncp_name: master0-storage-mgmt
+        _nncp_hostname: "master0.{{ sno_cluster_name }}.{{ sno_base_domain }}"
+        _nncp_storage_mac: "{{ (sno_master_nics | selectattr('network', 'equalto', 'storage') | first).mac }}"
+        _nncp_storage_ip: "{{ sno_storage_master_ip }}"
+        _nncp_vlan_ip: "{{ sno_mgmt_vlan_master_ip }}"
+
+    - name: Apply the master NodeNetworkConfigurationPolicy
+      ansible.builtin.command:
+        cmd: oc apply -f {{ sno_tf_dir }}/nncp-master0.yaml
+      changed_when: true
+
+    - name: Wait for the policy to be Available
+      ansible.builtin.command:
+        cmd: oc wait nncp/master0-storage-mgmt --for=condition=Available --timeout=240s
+      changed_when: false
+
+- name: SNO day 2 - iSCSI login from the node
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - vars.yml
+  tags: iscsi-test
+  environment:
+    KUBECONFIG: "{{ sno_manifests_dir }}/auth/kubeconfig"
+  tasks:
+    - name: Discover, log in, list, log out (oc debug)
+      ansible.builtin.command:
+        cmd: >-
+          oc debug node/master0.{{ sno_cluster_name }}.{{ sno_base_domain }} -- chroot /host bash -c '
+          ip route get {{ sno_storage_target_ip }};
+          iscsiadm -m discovery -t sendtargets -p {{ sno_storage_target_ip }}:3260 &&
+          iscsiadm -m node -T {{ sno_iscsi_iqn }} -p {{ sno_storage_target_ip }}:3260 --login &&
+          sleep 3 && lsblk -o NAME,SIZE,TRAN,VENDOR,MODEL && iscsiadm -m session -P 1 | head -20;
+          iscsiadm -m node -T {{ sno_iscsi_iqn }} -p {{ sno_storage_target_ip }}:3260 --logout'
+      register: _sno_iscsi
+      changed_when: false
+
+    - name: Show the iSCSI result
+      ansible.builtin.debug:
+        var: _sno_iscsi.stdout_lines

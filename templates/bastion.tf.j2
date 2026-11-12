@@ -35,6 +35,12 @@ resource "libvirt_cloudinit_disk" "{{ sno_prefix }}_bastion0_cloudinit" {
         routes:
           - to: default
             via: {{ sno_gateway }}
+{#  NOTE: CentOS Stream 9's cloud-init rejects this whole network_config
+    ("Address default is not a valid ip network", from `to: default` above)
+    and falls back to DHCP profiles; helper_node.sh repairs nic-1 and
+    05-baremetal-day2.yml configures nic-2 and the VLAN with nmcli. The
+    lines below are kept for documentation and because changing the
+    rendered cloud-init would replace a running bastion. #}
 {% if sno_master_layout == 'baremetal' %}
       nic-2:
         match:

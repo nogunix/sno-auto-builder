@@ -1,0 +1,48 @@
+# Rendered by 05-baremetal-day2.yml / 06-add-worker.yml.
+# Storage NIC selected by MAC (nmstate `identifier: mac-address`), so the
+# policy does not depend on the kernel's interface name; a static route to the
+# storage target subnet only (no default route on the storage segment); and
+# the management VLAN tagged on the bond that carries the machine network.
+apiVersion: nmstate.io/v1
+kind: NodeNetworkConfigurationPolicy
+metadata:
+  name: {{ _nncp_name }}
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: {{ _nncp_hostname }}
+  desiredState:
+    interfaces:
+      - name: storage0
+        type: ethernet
+        state: up
+        identifier: mac-address
+        mac-address: "{{ _nncp_storage_mac | upper }}"
+        ipv4:
+          enabled: true
+          dhcp: false
+          address:
+            - ip: {{ _nncp_storage_ip }}
+              prefix-length: {{ sno_storage_network.split('/')[1] }}
+        ipv6:
+          enabled: false
+{% if sno_nncp_vlan | default(true) | bool %}
+      - name: {{ sno_nncp_vlan_base | default(sno_master_bond_name) }}.{{ sno_mgmt_vlan_id }}
+        type: vlan
+        state: up
+        vlan:
+          base-iface: {{ sno_nncp_vlan_base | default(sno_master_bond_name) }}
+          id: {{ sno_mgmt_vlan_id }}
+        ipv4:
+          enabled: true
+          dhcp: false
+          address:
+            - ip: {{ _nncp_vlan_ip }}
+              prefix-length: {{ sno_mgmt_vlan_network.split('/')[1] }}
+        ipv6:
+          enabled: false
+{% endif %}
+    routes:
+      config:
+        - destination: {{ sno_storage_target_net }}
+          next-hop-address: {{ sno_storage_router_ip }}
+          next-hop-interface: storage0

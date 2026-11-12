@@ -107,6 +107,8 @@ sno_storage_worker_ip: "192.168.30.20"
 sno_storage_target_net: "192.168.31.0/24"
 sno_storage_target_ip: "192.168.31.5"
 sno_bastion_mac_storage: "52:54:00:26:a1:03"
+sno_iscsi_iqn: "iqn.2026-11.com.example:storage.lun0"
+sno_iscsi_lun_size: "5G"
 # Management VLAN carried tagged on the cluster network / bond0.
 sno_mgmt_vlan_id: 20
 sno_mgmt_vlan_network: "192.168.120.0/24"
