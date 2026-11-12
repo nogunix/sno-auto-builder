@@ -1,0 +1,67 @@
+# nodes-config.yaml for `oc adm node-image create` (06-add-worker.yml).
+# Same NMState shape as the master's agent-config (bond0 active-backup over
+# the two cluster NICs); the management VLAN is configured at boot here when
+# sno_worker_vlan_at_boot is true, to exercise a VLAN in the boot-time network
+# config (guide §5.7, KB 7137185).
+hosts:
+  - hostname: {{ sno_worker_name }}.{{ sno_cluster_name }}.{{ sno_base_domain }}
+    rootDeviceHints:
+      deviceName: /dev/sda
+    interfaces:
+{% for _nic in sno_worker_nics %}
+      - name: {{ _nic.name }}
+        macAddress: {{ _nic.mac }}
+{% endfor %}
+    networkConfig:
+      interfaces:
+{% for _nic in sno_worker_nics if _nic.network == 'sno' %}
+        - name: {{ _nic.name }}
+          type: ethernet
+          state: up
+          mac-address: {{ _nic.mac }}
+{% endfor %}
+        - name: {{ sno_master_bond_name }}
+          type: bond
+          state: up
+          link-aggregation:
+            mode: {{ sno_master_bond_mode }}
+            options:
+              miimon: "100"
+            port:
+{% for _nic in sno_worker_nics if _nic.network == 'sno' %}
+              - {{ _nic.name }}
+{% endfor %}
+          ipv4:
+            enabled: true
+            address:
+              - ip: {{ sno_worker_ip }}
+                prefix-length: {{ sno_machine_network.split('/')[1] }}
+            dhcp: false
+          ipv6:
+            enabled: false
+{% if sno_worker_vlan_at_boot | bool %}
+        - name: {{ sno_master_bond_name }}.{{ sno_mgmt_vlan_id }}
+          type: vlan
+          state: up
+          vlan:
+            base-iface: {{ sno_master_bond_name }}
+            id: {{ sno_mgmt_vlan_id }}
+          ipv4:
+            enabled: true
+            address:
+              - ip: {{ sno_mgmt_vlan_worker_ip }}
+                prefix-length: {{ sno_mgmt_vlan_network.split('/')[1] }}
+            dhcp: false
+          ipv6:
+            enabled: false
+{% endif %}
+      dns-resolver:
+        config:
+          server:
+            - {{ sno_proxy_ip }}
+      routes:
+        config:
+          - destination: 0.0.0.0/0
+            next-hop-address: {{ sno_gateway }}
+            next-hop-interface: {{ sno_master_bond_name }}
+            table-id: 254

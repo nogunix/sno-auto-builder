@@ -116,6 +116,24 @@ sno_mgmt_vlan_bastion_ip: "192.168.120.2"
 sno_mgmt_vlan_master_ip: "192.168.120.10"
 sno_mgmt_vlan_worker_ip: "192.168.120.20"
 
+# Worker added day 2 by 06-add-worker.yml (oc adm node-image create, no
+# Machine API). Same NIC shape as the master.
+sno_worker_name: "worker0"
+sno_worker_ip: "192.168.10.20"
+sno_worker_vcpu: 4
+sno_worker_memory: 12
+sno_worker_disk_size: 100
+sno_worker_nics:
+  - {name: eno1, mac: "52:54:00:26:a1:20", network: sno}
+  - {name: eno2, mac: "52:54:00:26:a1:21", network: sno}
+  - {name: eno3, mac: "52:54:00:26:a1:22", network: storage}
+sno_worker_dir: "{{ sno_tf_dir }}/worker"
+# Put the management VLAN into the worker's boot-time NMState (true) or leave
+# it to a NodeNetworkConfigurationPolicy later (false).
+sno_worker_vlan_at_boot: true
+# Let the playbook approve CSRs until the node is Ready.
+sno_worker_approve_csrs: false
+
 # NTP sources handed to the node through agent-config.yaml. The bastion already
 # runs chrony and opens the ntp service in firewalld (helper_node.sh.j2); this
 # is what actually points the cluster at it. Without it the node has no

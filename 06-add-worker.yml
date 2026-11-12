@@ -1,0 +1,157 @@
+---
+# Add a worker to the running cluster without the Machine API:
+# `oc adm node-image create` builds a node ISO from the cluster's own release
+# (via the mirror when disconnected), a libvirt VM boots it, and the CSRs are
+# approved by hand — the standard flow for an ABI/UPI bare-metal cluster.
+#
+# Needs sno_master_layout: baremetal (the worker reuses the storage network
+# and the bond layout). Tags: iso, vm, csr
+- name: SNO add worker - prerequisites
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - vars.yml
+  tags: always
+  tasks:
+    - name: Assert the layout supports a worker
+      ansible.builtin.assert:
+        that:
+          - sno_master_layout == 'baremetal'
+
+    - name: Read bastion IP from the OpenTofu output
+      ansible.builtin.command:
+        cmd: tofu output -raw bastion_ip
+        chdir: "{{ sno_tf_dir }}"
+      register: tf_bastion_ip
+      changed_when: false
+
+    - name: Add bastion to inventory
+      ansible.builtin.add_host:
+        name: bastion_server
+        ansible_host: "{{ tf_bastion_ip.stdout | trim }}"
+        ansible_user: "{{ sno_bastion_user }}"
+        ansible_password: "{{ sno_bastion_password }}"
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      no_log: true
+
+# §5.3.2: A and PTR for the new node. dnsmasq answers both from /etc/hosts.
+- name: SNO add worker - DNS on the bastion
+  hosts: bastion_server
+  gather_facts: false
+  become: true
+  vars_files:
+    - vars.yml
+  tags: iso
+  tasks:
+    - name: Add the worker to the bastion's /etc/hosts
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        line: "{{ sno_worker_ip }} {{ sno_worker_name }}.{{ sno_cluster_name }}.{{ sno_base_domain }} {{ sno_worker_name }}"
+      notify: Restart dnsmasq
+
+  handlers:
+    - name: Restart dnsmasq
+      ansible.builtin.systemd_service:
+        name: dnsmasq
+        state: restarted
+
+- name: SNO add worker - node ISO
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - vars.yml
+  tags: iso
+  environment:
+    KUBECONFIG: "{{ sno_manifests_dir }}/auth/kubeconfig"
+  tasks:
+    - name: Create the worker asset directory
+      ansible.builtin.file:
+        path: "{{ sno_worker_dir }}"
+        state: directory
+        mode: '0755'
+
+    # The oc that builds the node ISO should match the cluster version.
+    - name: Download the matching oc client
+      ansible.builtin.get_url:
+        url: "https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ sno_cluster_version }}/openshift-client-linux.tar.gz"
+        dest: "{{ sno_tf_dir }}/openshift-client-linux.tar.gz"
+        mode: '0644'
+
+    - name: Extract oc
+      ansible.builtin.unarchive:
+        src: "{{ sno_tf_dir }}/openshift-client-linux.tar.gz"
+        dest: "{{ sno_tf_dir }}"
+        include:
+          - oc
+        creates: "{{ sno_tf_dir }}/oc"
+
+    - name: Render nodes-config.yaml
+      ansible.builtin.template:
+        src: templates/nodes-config.yaml.j2
+        dest: "{{ sno_worker_dir }}/nodes-config.yaml"
+        mode: '0644'
+
+    - name: Create the node ISO (oc adm node-image create)
+      ansible.builtin.command:
+        cmd: >-
+          {{ sno_tf_dir }}/oc adm node-image create
+          --dir {{ sno_worker_dir }}
+          --registry-config {{ _sno_effective_pull_secret | default(sno_mirror_dir ~ '/containers/auth.json') }}
+          --report
+        creates: "{{ sno_worker_dir }}/node.x86_64.iso"
+      register: _sno_node_image
+      changed_when: true
+
+- name: SNO add worker - VM
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - vars.yml
+  tags: vm
+  tasks:
+    - name: Generate the worker OpenTofu manifest
+      ansible.builtin.template:
+        src: templates/worker.tf.j2
+        dest: "{{ sno_tf_dir }}/{{ sno_prefix }}_{{ sno_worker_name }}.tf"
+        mode: '0644'
+
+    # 02 removes the master domain from the state before every apply, so a
+    # targeted apply keeps this run from touching (or recreating) it.
+    - name: OpenTofu apply (worker VM only)
+      ansible.builtin.command:
+        cmd: >-
+          tofu apply -auto-approve -input=false
+          -target=libvirt_domain.{{ sno_prefix }}_{{ sno_worker_name }}
+        chdir: "{{ sno_tf_dir }}"
+      register: _sno_worker_apply
+      changed_when: "'Apply complete!' in _sno_worker_apply.stdout"
+
+# §5.10: client CSRs first, then the serving CSRs, until the node is Ready.
+# Off by default so the approval can be done (and observed) by hand.
+- name: SNO add worker - CSR approval
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - vars.yml
+  tags: csr
+  environment:
+    KUBECONFIG: "{{ sno_manifests_dir }}/auth/kubeconfig"
+  tasks:
+    - name: Approve pending CSRs until the worker is Ready
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail;
+          oc get csr -o go-template="$TPL"
+          | xargs --no-run-if-empty oc adm certificate approve >/dev/null;
+          oc get node {{ sno_worker_name }}.{{ sno_cluster_name }}.{{ sno_base_domain }}
+          -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+        executable: /bin/bash
+      environment:
+        # Pending = no .status at all (guide §5.10's go-template).
+        TPL: '{% raw %}{{range .items}}{{if not .status}}{{.metadata.name}}{{"\n"}}{{end}}{{end}}{% endraw %}'
+      register: _sno_worker_ready
+      until: _sno_worker_ready.stdout == 'True'
+      retries: 120
+      delay: 30
+      changed_when: true
+      when: sno_worker_approve_csrs | bool

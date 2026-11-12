@@ -1,0 +1,52 @@
+# Worker added day 2 with `oc adm node-image create` (06-add-worker.yml).
+# Not a Machine API machine: libvirt and the cluster know nothing of each
+# other, exactly like a bare-metal node joined to an ABI/UPI cluster.
+resource "libvirt_volume" "{{ sno_prefix }}_{{ sno_worker_name }}_root" {
+  name   = "{{ sno_prefix }}_{{ sno_worker_name }}_root.qcow2"
+  pool   = libvirt_pool.default.name
+  format = "qcow2"
+  size   = {{ sno_worker_disk_size }} * 1024 * 1024 * 1024
+}
+
+resource "libvirt_domain" "{{ sno_prefix }}_{{ sno_worker_name }}" {
+  name      = "{{ sno_prefix }}_{{ sno_worker_name }}"
+  vcpu      = {{ sno_worker_vcpu }}
+  memory    = {{ sno_worker_memory }} * 1024
+  autostart = true
+
+  cpu {
+    mode = "host-passthrough"
+  }
+
+{% for _nic in sno_worker_nics %}
+  network_interface {
+    network_id = libvirt_network.{{ sno_prefix }}_{{ 'network' if _nic.network == 'sno' else 'storage' }}.id
+    mac        = "{{ _nic.mac }}"
+  }
+{% endfor %}
+
+  disk {
+    file = "{{ sno_worker_dir }}/node.x86_64.iso"
+  }
+
+  disk {
+    volume_id = libvirt_volume.{{ sno_prefix }}_{{ sno_worker_name }}_root.id
+    scsi      = true
+  }
+
+  boot_device {
+    dev = ["hd", "cdrom"]
+  }
+
+  console {
+    type        = "pty"
+    target_type = "serial"
+    target_port = "0"
+  }
+
+  graphics {
+    type        = "vnc"
+    listen_type = "address"
+    autoport    = true
+  }
+}
