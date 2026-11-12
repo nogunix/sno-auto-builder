@@ -176,11 +176,22 @@ OVERRIDES=(
 )
 
 rc=0
+# One simulated install-complete timeout: 02 must retry it and still pass.
+export MOCK_INSTALL_COMPLETE_TIMEOUTS=1
 for pb in 01-infra-bastion.yml 02-create-sno-cluster.yml; do
   echo "==> $pb"
   ansible-playbook -i "$REPO_ROOT/test/inventory" "${LIMIT_ARGS[@]}" \
     "${OVERRIDES[@]}" "$REPO_ROOT/$pb" || { rc=1; echo "!! $pb failed"; }
 done
+unset MOCK_INSTALL_COMPLETE_TIMEOUTS
+
+waits=$(grep -c 'agent wait-for install-complete' "$MOCK_LOG" || true)
+if [ "$waits" -eq 2 ]; then
+  echo "==> install-complete timed out once and was retried, as expected"
+else
+  echo "!! expected 2 install-complete calls (timeout + retry), saw $waits" >&2
+  rc=1
+fi
 
 # --- Negative path: the tofu-output-missing gotcha ---------------------------
 # A missing output makes real tofu warn on *stdout* and exit 0, so the callers

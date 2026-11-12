@@ -40,6 +40,18 @@ KUBECONFIG
     echo 'INFO cluster bootstrap is complete'
     ;;
   "agent wait-for install-complete")
+    # MOCK_INSTALL_COMPLETE_TIMEOUTS=N makes the first N calls time out the
+    # way the real installer does after its fixed 40 minutes (exit 6), so
+    # 02's retry is exercised. The count lives next to the assets.
+    if [ "${MOCK_INSTALL_COMPLETE_TIMEOUTS:-0}" -gt 0 ]; then
+      count_file="$dir/.mock-install-complete-calls"
+      calls=$(( $(cat "$count_file" 2>/dev/null || echo 0) + 1 ))
+      echo "$calls" > "$count_file"
+      if [ "$calls" -le "$MOCK_INSTALL_COMPLETE_TIMEOUTS" ]; then
+        echo 'ERROR failed to initialize the cluster: Cluster operator openshift-samples is not available' >&2
+        exit 6
+      fi
+    fi
     echo 'INFO Install complete!'
     echo 'INFO Login to the console with user: "kubeadmin"'
     ;;
