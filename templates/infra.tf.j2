@@ -49,3 +49,14 @@ resource "libvirt_network" "{{ sno_prefix }}_network" {
     enabled = false
   }
 }
+{% if sno_master_layout == 'baremetal' %}
+
+{#  Storage segment for the bare-metal-like layout: isolated, and deliberately
+    without a host address, so the only way onto it is a NIC attached to it.
+    The bastion is the "storage router" on it (bastion.tf.j2). #}
+resource "libvirt_network" "{{ sno_prefix }}_storage" {
+  name      = "{{ sno_prefix }}_storage"
+  autostart = true
+  mode      = "none"
+}
+{% endif %}

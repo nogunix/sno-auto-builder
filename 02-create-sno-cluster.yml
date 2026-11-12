@@ -34,6 +34,13 @@
         dest: "{{ sno_tf_dir }}/{{ sno_prefix }}_cluster_master0.tf"
         mode: '0644'
 
+    - name: Generate the master boot-order XSLT (bare-metal-like layout)
+      ansible.builtin.template:
+        src: templates/master-bootorder.xsl.j2
+        dest: "{{ sno_tf_dir }}/{{ sno_prefix }}_master0-bootorder.xsl"
+        mode: '0644'
+      when: sno_master_layout == 'baremetal'
+
     - name: Remove SNO master domain from OpenTofu state if present (stale from prior run)
       ansible.builtin.command:
         cmd: tofu state rm libvirt_domain.{{ sno_prefix }}_master0

@@ -64,6 +64,56 @@ sno_interface: "enp1s0"
 sno_api_vip: "192.168.10.100"
 sno_ingress_vip: "192.168.10.101"
 
+# ------------------------------------------------------------------------------
+# Bare-metal-like master layout
+# ------------------------------------------------------------------------------
+# "single"    — one NIC, one data disk (default; everything above applies).
+# "baremetal" — three NICs and three disks, simulating bare-metal physical
+#               nodes:
+#                 NIC1 + NIC2 on sno_network -> bond0 (active-backup). The
+#                   machine network rides bond0 untagged; VLAN-tagged frames
+#                   pass the libvirt Linux bridge untouched, so bond0 is a
+#                   "trunk" and VLAN sno_mgmt_vlan_id can be added on it.
+#                 NIC3 on the isolated storage network -> left unconfigured at
+#                   install time, configured day 2 with NMState.
+#                 Disks: the install target is deliberately NOT the first SCSI
+#                   disk, so `deviceName: /dev/sda` would pick the wrong one;
+#                   the agent-config selects it by WWN instead.
+#               sno_interface / sno_master_mac are then unused; the per-NIC
+#               values below apply.
+sno_master_layout: "single"
+sno_master_nics:
+  - {name: eno1, mac: "52:54:00:26:a1:10", network: sno}       # bond0 port
+  - {name: eno2, mac: "52:54:00:26:a1:11", network: sno}       # bond0 port
+  - {name: eno3, mac: "52:54:00:26:a1:12", network: storage}   # storage segment
+sno_master_bond_name: "bond0"
+sno_master_bond_mode: "active-backup"
+sno_master_disks:
+  - {name: data1, size: 40, wwn: "0x5000c500a1b2c311"}
+  - {name: root, size: 120, wwn: "0x5000c500a1b2c312"}
+  - {name: data2, size: 20, wwn: "0x5000c500a1b2c313"}
+sno_master_root_device_hints:
+  wwn: "0x5000c500a1b2c312"
+
+# Storage segment (layout "baremetal"): an isolated libvirt network with no
+# host address. The bastion sits on it as the "storage router"
+# (sno_storage_router_ip) and owns the iSCSI portal address in a *different*
+# subnet (sno_storage_target_ip), so the node can only reach the target
+# through a static route only.
+sno_storage_network: "192.168.30.0/24"
+sno_storage_router_ip: "192.168.30.1"
+sno_storage_master_ip: "192.168.30.10"
+sno_storage_worker_ip: "192.168.30.20"
+sno_storage_target_net: "192.168.31.0/24"
+sno_storage_target_ip: "192.168.31.5"
+sno_bastion_mac_storage: "52:54:00:26:a1:03"
+# Management VLAN carried tagged on the cluster network / bond0.
+sno_mgmt_vlan_id: 20
+sno_mgmt_vlan_network: "192.168.120.0/24"
+sno_mgmt_vlan_bastion_ip: "192.168.120.2"
+sno_mgmt_vlan_master_ip: "192.168.120.10"
+sno_mgmt_vlan_worker_ip: "192.168.120.20"
+
 # NTP sources handed to the node through agent-config.yaml. The bastion already
 # runs chrony and opens the ntp service in firewalld (helper_node.sh.j2); this
 # is what actually points the cluster at it. Without it the node has no

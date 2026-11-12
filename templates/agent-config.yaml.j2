@@ -12,6 +12,54 @@ additionalNTPSources:
 hosts:
   - hostname: master0.{{ sno_cluster_name }}.{{ sno_base_domain }}
     role: master
+{% if sno_master_layout == 'baremetal' %}
+{#  Bare-metal-like layout: the target disk is the second SCSI disk, so it is
+    picked by WWN (udev ID_WWN_WITH_EXTENSION), not by /dev/sdX. #}
+    rootDeviceHints:
+{{ sno_master_root_device_hints | to_nice_yaml(indent=2) | trim | indent(6, true) }}
+    interfaces:
+{% for _nic in sno_master_nics %}
+      - name: {{ _nic.name }}
+        macAddress: {{ _nic.mac }}
+{% endfor %}
+    networkConfig:
+      interfaces:
+{% for _nic in sno_master_nics if _nic.network == 'sno' %}
+        - name: {{ _nic.name }}
+          type: ethernet
+          state: up
+          mac-address: {{ _nic.mac }}
+{% endfor %}
+        - name: {{ sno_master_bond_name }}
+          type: bond
+          state: up
+          link-aggregation:
+            mode: {{ sno_master_bond_mode }}
+            options:
+              miimon: "100"
+            port:
+{% for _nic in sno_master_nics if _nic.network == 'sno' %}
+              - {{ _nic.name }}
+{% endfor %}
+          ipv4:
+            enabled: true
+            address:
+              - ip: {{ sno_master_ip }}
+                prefix-length: {{ sno_machine_network.split('/')[1] }}
+            dhcp: false
+          ipv6:
+            enabled: false
+      dns-resolver:
+        config:
+          server:
+            - {{ sno_proxy_ip }}
+      routes:
+        config:
+          - destination: 0.0.0.0/0
+            next-hop-address: {{ sno_gateway }}
+            next-hop-interface: {{ sno_master_bond_name }}
+            table-id: 254
+{% else %}
 {#  /dev/sda is the data volume only because master.tf.j2 attaches it with
     `scsi = true` while the agent ISO rides the default (virtio) bus. The
     installer docs recommend a stable identifier such as /dev/disk/by-path/...;
@@ -44,3 +92,4 @@ hosts:
             next-hop-address: {{ sno_gateway }}
             next-hop-interface: {{ sno_interface }}
             table-id: 254
+{% endif %}

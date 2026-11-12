@@ -1,0 +1,34 @@
+---
+# Bare-metal verification run: OMR 2.0.12 (offline bundle) + m2d/d2m +
+# 3-NIC/3-disk master + storage segment. Use with:
+#   ansible-playbook 01-infra-bastion.yml -e @verify/full-baremetal-4.20.42.yml
+sno_disconnected: true
+sno_cluster_version: "4.20.42"
+sno_mirror_channel: "stable-4.20"
+sno_mirror_min_version: "4.20.42"
+sno_mirror_max_version: "4.20.42"
+sno_oc_mirror_version: "4.22.18"
+
+sno_bastion_disk_size: 100
+sno_bastion_memory: 8
+sno_bastion_vcpu: 4
+
+sno_mirror_registry_type: "omr"
+sno_mirror_registry_user: "init"
+sno_mirror_registry_password: "Mirror-pass-2026"
+sno_omr_data_disk_size: 200
+sno_omr_bundle_local: "{{ lookup('env', 'HOME') }}/sno-dl/mirror-registry-offline-v2.0.12.tar.gz"
+sno_mirror_workflow: "m2d2m"
+sno_mirror_operators:
+  - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.20
+    packages:
+      - name: cluster-logging
+      - name: kubernetes-nmstate-operator
+
+sno_master_layout: "baremetal"
+sno_master_vcpu: 8
+sno_master_memory: 18
+
+# Outside sno_base_dir so a pre-built m2d cache/archive survives 99-destroy-all
+# (and is NOT removed by it — delete it by hand when done).
+sno_mirror_dir: "{{ lookup('env', 'HOME') }}/sno-mirror-run2"

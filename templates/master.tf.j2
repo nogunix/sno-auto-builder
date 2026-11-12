@@ -1,9 +1,21 @@
+{% if sno_master_layout == 'baremetal' %}
+{% for _d in sno_master_disks %}
+resource "libvirt_volume" "{{ sno_prefix }}_master0_{{ _d.name }}" {
+  name   = "{{ sno_prefix }}_master0_{{ _d.name }}.qcow2"
+  pool   = libvirt_pool.default.name
+  format = "qcow2"
+  size   = {{ _d.size }} * 1024 * 1024 * 1024
+}
+
+{% endfor %}
+{% else %}
 resource "libvirt_volume" "{{ sno_prefix }}_master0_0" {
   name   = "{{ sno_prefix }}_master0_0.qcow2"
   pool   = libvirt_pool.default.name
   format = "qcow2"
   size   = {{ sno_master_disk_size }} * 1024 * 1024 * 1024
 }
+{% endif %}
 
 resource "libvirt_domain" "{{ sno_prefix }}_master0" {
   name      = "{{ sno_prefix }}_master0"
@@ -15,23 +27,50 @@ resource "libvirt_domain" "{{ sno_prefix }}_master0" {
     mode = "host-passthrough"
   }
 
+{% if sno_master_layout == 'baremetal' %}
+{% for _nic in sno_master_nics %}
+  network_interface {
+    network_id = libvirt_network.{{ sno_prefix }}_{{ 'network' if _nic.network == 'sno' else 'storage' }}.id
+    mac        = "{{ _nic.mac }}"
+  }
+{% endfor %}
+{% else %}
   network_interface {
     network_id = libvirt_network.{{ sno_prefix }}_network.id
     mac        = "{{ sno_master_mac }}"
   }
+{% endif %}
 
   disk {
     file = "{{ sno_tf_dir }}/{{ sno_cluster_os_image_name }}"
   }
 
+{% if sno_master_layout == 'baremetal' %}
+{% for _d in sno_master_disks %}
+  disk {
+    volume_id = libvirt_volume.{{ sno_prefix }}_master0_{{ _d.name }}.id
+    scsi      = true
+    wwn       = "{{ _d.wwn }}"
+  }
+{% endfor %}
+{% else %}
   disk {
     volume_id = libvirt_volume.{{ sno_prefix }}_master0_0.id
     scsi      = true
   }
+{% endif %}
 
+{% if sno_master_layout == 'baremetal' %}
+  # Boot order per device (root disk, then ISO) instead of boot_device; see
+  # master-bootorder.xsl.
+  xml {
+    xslt = file("${path.module}/{{ sno_prefix }}_master0-bootorder.xsl")
+  }
+{% else %}
   boot_device {
     dev = ["hd", "cdrom"]
   }
+{% endif %}
 
   console {
     type        = "pty"

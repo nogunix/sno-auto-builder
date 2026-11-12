@@ -35,6 +35,20 @@ resource "libvirt_cloudinit_disk" "{{ sno_prefix }}_bastion0_cloudinit" {
         routes:
           - to: default
             via: {{ sno_gateway }}
+{% if sno_master_layout == 'baremetal' %}
+      nic-2:
+        match:
+          macaddress: "{{ sno_bastion_mac_storage }}"
+        addresses:
+          - {{ sno_storage_router_ip }}/{{ sno_storage_network.split('/')[1] }}
+          - {{ sno_storage_target_ip }}/32
+    vlans:
+      vlan{{ sno_mgmt_vlan_id }}:
+        id: {{ sno_mgmt_vlan_id }}
+        link: nic-1
+        addresses:
+          - {{ sno_mgmt_vlan_bastion_ip }}/{{ sno_mgmt_vlan_network.split('/')[1] }}
+{% endif %}
   EOS
 }
 
@@ -85,6 +99,13 @@ resource "libvirt_domain" "{{ sno_prefix }}_bastion0" {
     network_id = libvirt_network.{{ sno_prefix }}_network.id
     mac        = "{{ sno_bastion_mac_sno }}"
   }
+{% if sno_master_layout == 'baremetal' %}
+
+  network_interface {
+    network_id = libvirt_network.{{ sno_prefix }}_storage.id
+    mac        = "{{ sno_bastion_mac_storage }}"
+  }
+{% endif %}
 
   disk {
     volume_id = libvirt_volume.{{ sno_prefix }}_bastion0.id
