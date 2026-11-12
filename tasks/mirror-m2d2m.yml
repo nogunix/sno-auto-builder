@@ -1,0 +1,192 @@
+---
+# Disconnected install, stage 3 alternative (localhost + bastion):
+# mirror-to-disk on the host, carry the archive to the bastion, then
+# disk-to-mirror on the bastion — a two-sided oc-mirror flow for air-gapped
+# environments, instead of the default mirror-to-mirror.
+#
+# Imported by tasks/mirror-content.yml when sno_mirror_workflow is "m2d2m".
+# The bastion is treated as the closed side: the archive, the
+# ImageSetConfiguration and the oc-mirror binary are copied to it, checked
+# against a checksum list, and pushed from there with conservative parallelism
+# for OMR 2.x (1/1).
+
+# Set sno_mirror_m2d2m_run: false to re-run 01 against a registry that is
+# already filled (e.g. after fixing a later task): only the generated cluster
+# resources are fetched again.
+- name: Mirror-to-disk, carry, disk-to-mirror
+  when: sno_mirror_m2d2m_run | bool
+  block:
+    - name: Create the archive directory on the host
+      ansible.builtin.file:
+        path: "{{ sno_mirror_dir }}/archive"
+        state: directory
+        mode: '0755'
+
+    # oc-mirror v2 keeps a history of what earlier mirror-to-disk runs put into
+    # archives (working-dir/.history/.history-<timestamp>), and a re-run against the same workspace
+    # writes only the DIFFERENCE — while still logging "190 / 190 release images
+    # mirrored successfully" and exiting 0. A delta archive pushed into an empty
+    # registry fails (the catalog is missing). So unless an incremental carry is
+    # explicitly wanted, start from no history.
+    - name: Remove earlier mirror-to-disk history and archives (full archive)
+      ansible.builtin.shell:
+        cmd: rm -rf working-dir/.history mirror_*.tar
+        chdir: "{{ sno_mirror_dir }}/archive"
+      when: not sno_mirror_m2d_incremental | bool
+      changed_when: true
+
+    # §2.5 step 1: dry-run first; mapping.txt lists every image that will be
+    # fetched (and shows any z-stream beyond maxVersion slipping in).
+    - name: Mirror-to-disk dry run
+      ansible.builtin.shell:
+        cmd: >-
+          umask 0022 &&
+          {{ sno_mirror_dir }}/oc-mirror -c {{ sno_mirror_dir }}/imageset-config.yaml
+          file://{{ sno_mirror_dir }}/archive --v2
+          --cache-dir {{ sno_mirror_dir }}/.cache
+          --authfile {{ sno_mirror_dir }}/containers/auth.json
+          --dry-run
+      environment:
+        XDG_RUNTIME_DIR: "{{ sno_mirror_dir }}"
+        HOME: "{{ lookup('env', 'HOME') }}"
+      changed_when: false
+
+    # §2.5 step 2
+    - name: Mirror-to-disk
+      ansible.builtin.shell:
+        cmd: >-
+          umask 0022 &&
+          {{ sno_mirror_dir }}/oc-mirror -c {{ sno_mirror_dir }}/imageset-config.yaml
+          file://{{ sno_mirror_dir }}/archive --v2
+          --cache-dir {{ sno_mirror_dir }}/.cache
+          --authfile {{ sno_mirror_dir }}/containers/auth.json
+      environment:
+        XDG_RUNTIME_DIR: "{{ sno_mirror_dir }}"
+        HOME: "{{ lookup('env', 'HOME') }}"
+      changed_when: true
+
+    - name: Find the archive files
+      ansible.builtin.find:
+        paths: "{{ sno_mirror_dir }}/archive"
+        patterns: "mirror_*.tar"
+      register: _sno_m2d_archives
+
+    - name: Assert mirror-to-disk produced an archive
+      ansible.builtin.assert:
+        that:
+          - _sno_m2d_archives.files | length > 0
+        fail_msg: >-
+          oc-mirror finished but no mirror_*.tar exists under
+          {{ sno_mirror_dir }}/archive (guide §2.7). Check
+          {{ sno_mirror_dir }}/archive/working-dir/logs/.
+
+    - name: Stage the carry-in set next to the archive
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "{{ sno_mirror_dir }}/archive/"
+        mode: '0755'
+        remote_src: true
+      loop:
+        - "{{ sno_mirror_dir }}/imageset-config.yaml"
+        - "{{ sno_mirror_dir }}/oc-mirror"
+
+    # §2.1: checksum list made on the connected side, verified on the closed side.
+    - name: Create the checksum list
+      ansible.builtin.shell:
+        cmd: sha256sum mirror_*.tar imageset-config.yaml oc-mirror > CARRY-LIST.sha256
+        chdir: "{{ sno_mirror_dir }}/archive"
+      changed_when: true
+
+    - name: Give the bastion user the carry directory
+      ansible.builtin.file:
+        path: "{{ sno_omr_root }}/carry"
+        state: directory
+        owner: "{{ sno_bastion_user }}"
+        mode: '0755'
+      delegate_to: bastion_server
+      become: true
+
+    # The "media handoff". rsync over the bastion's management address; only the
+    # files the guide lists are carried (not the host's working-dir or cache).
+    - name: Carry the archive to the bastion
+      ansible.builtin.shell:
+        cmd: >-
+          sshpass -e rsync -a --partial
+          -e "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
+          mirror_*.tar imageset-config.yaml oc-mirror CARRY-LIST.sha256
+          {{ sno_bastion_user }}@{{ sno_bastion_ip }}:{{ sno_omr_root }}/carry/
+        chdir: "{{ sno_mirror_dir }}/archive"
+      environment:
+        SSHPASS: "{{ sno_bastion_password }}"
+      changed_when: true
+      no_log: false
+
+    - name: Verify the checksums on the bastion
+      ansible.builtin.command:
+        cmd: sha256sum -c CARRY-LIST.sha256
+        chdir: "{{ sno_omr_root }}/carry"
+      delegate_to: bastion_server
+      changed_when: false
+
+    # §4.1. Runs as root with HOME set (§2.5: oc-mirror refuses to start without
+    # $HOME even with --cache-dir) and the authfile §3.4 wrote.
+    - name: Disk-to-mirror on the bastion
+      ansible.builtin.shell:
+        cmd: >-
+          umask 0022 &&
+          {{ sno_omr_root }}/carry/oc-mirror -c {{ sno_omr_root }}/carry/imageset-config.yaml
+          --from file://{{ sno_omr_root }}/carry
+          docker://{{ sno_mirror_registry }} --v2
+          --cache-dir {{ sno_omr_root }}/oc-mirror-cache
+          --authfile /root/.config/containers/auth.json
+          --parallel-images={{ sno_mirror_parallel_images }}
+          --parallel-layers={{ sno_mirror_parallel_layers }}
+          --image-timeout 30m --retry-times 8 --retry-delay 10s
+          > {{ sno_omr_root }}/d2m.log 2>&1
+      environment:
+        HOME: /root
+      delegate_to: bastion_server
+      become: true
+      changed_when: true
+
+    - name: Read the disk-to-mirror summary lines
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail;
+          grep -E '[0-9]+ / [0-9]+ .*images|mirroring_errors|error' {{ sno_omr_root }}/d2m.log | tail -20
+        executable: /bin/bash
+      delegate_to: bastion_server
+      become: true
+      register: _sno_d2m_summary
+      changed_when: false
+      failed_when: false
+
+    - name: Show the disk-to-mirror summary
+      ansible.builtin.debug:
+        var: _sno_d2m_summary.stdout_lines
+
+- name: List the generated cluster resources
+  ansible.builtin.find:
+    paths: "{{ sno_omr_root }}/carry/working-dir/cluster-resources"
+  delegate_to: bastion_server
+  become: true
+  register: _sno_d2m_resources
+
+- name: Create the local cluster-resources directory
+  ansible.builtin.file:
+    path: "{{ sno_mirror_dir }}/working-dir/cluster-resources"
+    state: directory
+    mode: '0755'
+
+# Fetched to where tasks/mirror-content.yml (and the m2m flow) expect them, so
+# the imageDigestSources assert below works unchanged.
+- name: Fetch the generated cluster resources to the host
+  ansible.builtin.fetch:
+    src: "{{ item.path }}"
+    dest: "{{ sno_mirror_dir }}/working-dir/cluster-resources/"
+    flat: true
+  loop: "{{ _sno_d2m_resources.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+  delegate_to: bastion_server
+  become: true

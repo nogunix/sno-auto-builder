@@ -118,14 +118,37 @@
   environment:
     XDG_RUNTIME_DIR: "{{ sno_mirror_dir }}"
   changed_when: true
+  when: sno_mirror_workflow == 'm2m'
+
+# Two-sided alternative: mirror-to-disk here, disk-to-mirror on the bastion
+# (two-sided air-gap flow). Writes the same
+# working-dir/cluster-resources/ the checks below read.
+- name: Mirror via an archive (mirror-to-disk, then disk-to-mirror)
+  ansible.builtin.import_tasks: mirror-m2d2m.yml
+  when: sno_mirror_workflow == 'm2d2m'
+
+# Quay (OMR) rejects HTTP Basic on the /v2/ API with 401 "Invalid bearer token
+# format" and wants the Docker token flow; Distribution accepts Basic. So for
+# OMR fetch a bearer token from /v2/auth first.
+- name: Get a registry bearer token (OMR)
+  ansible.builtin.uri:
+    url: "https://{{ sno_mirror_registry }}/v2/auth?service={{ sno_mirror_registry }}&scope=repository:openshift/release-images:pull"
+    ca_path: "{{ sno_mirror_dir }}/ca.crt"
+    url_username: "{{ sno_mirror_registry_user }}"
+    url_password: "{{ sno_mirror_registry_password }}"
+    force_basic_auth: true
+  register: _sno_mirror_token
+  when: sno_mirror_registry_type == 'omr'
+  no_log: true
 
 - name: Verify the release payload reached the registry
   ansible.builtin.uri:
     url: "https://{{ sno_mirror_registry }}/v2/openshift/release-images/tags/list"
     ca_path: "{{ sno_mirror_dir }}/ca.crt"
-    url_username: "{{ sno_mirror_registry_user }}"
-    url_password: "{{ sno_mirror_registry_password }}"
-    force_basic_auth: true
+    url_username: "{{ omit if sno_mirror_registry_type == 'omr' else sno_mirror_registry_user }}"
+    url_password: "{{ omit if sno_mirror_registry_type == 'omr' else sno_mirror_registry_password }}"
+    force_basic_auth: "{{ sno_mirror_registry_type != 'omr' }}"
+    headers: "{{ {'Authorization': 'Bearer ' ~ _sno_mirror_token.json.token} if sno_mirror_registry_type == 'omr' else {} }}"
   register: _sno_mirror_tags
   no_log: true
 

@@ -53,6 +53,18 @@ resource "libvirt_volume" "{{ sno_prefix }}_bastion0" {
   size           = {{ sno_bastion_disk_size }} * 1024 * 1024 * 1024
 }
 
+{% if sno_omr_data_disk_size | int > 0 %}
+# Separate data disk for the mirror registry.
+# SCSI with a fixed WWN so it shows up as /dev/disk/by-id/wwn-<wwn>, which is
+# what tasks/omr-registry.yml formats and puts into fstab.
+resource "libvirt_volume" "{{ sno_prefix }}_bastion0_data" {
+  name   = "{{ sno_prefix }}_bastion0_data.qcow2"
+  pool   = libvirt_pool.default.name
+  format = "qcow2"
+  size   = {{ sno_omr_data_disk_size }} * 1024 * 1024 * 1024
+}
+
+{% endif %}
 resource "libvirt_domain" "{{ sno_prefix }}_bastion0" {
   name      = "{{ sno_prefix }}_bastion0"
   vcpu      = {{ sno_bastion_vcpu }}
@@ -78,6 +90,14 @@ resource "libvirt_domain" "{{ sno_prefix }}_bastion0" {
     volume_id = libvirt_volume.{{ sno_prefix }}_bastion0.id
     scsi      = true
   }
+{% if sno_omr_data_disk_size | int > 0 %}
+
+  disk {
+    volume_id = libvirt_volume.{{ sno_prefix }}_bastion0_data.id
+    scsi      = true
+    wwn       = "{{ sno_omr_data_disk_wwn }}"
+  }
+{% endif %}
 
   cloudinit = libvirt_cloudinit_disk.{{ sno_prefix }}_bastion0_cloudinit.id
 

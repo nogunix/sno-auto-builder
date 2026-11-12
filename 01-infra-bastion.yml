@@ -192,7 +192,17 @@
     # come up on a re-run too, where the bastion is already configured.
     - name: Run the mirror registry on the bastion
       ansible.builtin.import_tasks: tasks/mirror-registry.yml
-      when: sno_disconnected | bool
+      when:
+        - sno_disconnected | bool
+        - sno_mirror_registry_type == 'distribution'
+
+    # Alternative: mirror registry for Red Hat OpenShift (OMR) 2.x from its
+    # offline bundle, installed with an explicit data disk and custom CA.
+    - name: Install mirror registry for Red Hat OpenShift on the bastion
+      ansible.builtin.import_tasks: tasks/omr-registry.yml
+      when:
+        - sno_disconnected | bool
+        - sno_mirror_registry_type == 'omr'
 
   handlers:
     # Notified by tasks/mirror-registry.yml when the certificate or the Quadlet

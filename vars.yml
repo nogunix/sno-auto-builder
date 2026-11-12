@@ -172,6 +172,46 @@ sno_mirror_image_sources:
     mirrors:
       - "{{ sno_mirror_registry }}/openshift/release"
 
+# ------------------------------------------------------------------------------
+# Registry and mirroring flavour
+# ------------------------------------------------------------------------------
+# "distribution" — the Docker Distribution registry above (default).
+# "omr"          — mirror registry for Red Hat OpenShift 2.x from its offline
+#                  bundle (tasks/omr-registry.yml).
+#                  OMR is supported on RHEL 8/9 only; the bastion here is
+#                  CentOS Stream 9. Needs sno_bastion_memory >= 6 and a
+#                  password of 8+ characters. The OMR admin user is
+#                  sno_mirror_registry_user (set it to e.g. "init").
+sno_mirror_registry_type: "distribution"
+sno_omr_bundle_url: "https://github.com/quay/mirror-registry/releases/download/v2.0.12/mirror-registry-offline.tar.gz"
+# Path on the host of an already-downloaded bundle; empty = download on the bastion.
+sno_omr_bundle_local: ""
+# Where OMR, the carried archive and the d2m cache live on the bastion.
+sno_omr_root: "/data"
+# GB; > 0 attaches a dedicated SCSI data disk to the bastion and mounts it on
+# sno_omr_root by its /dev/disk/by-id name (guide §3.1). 0 = use the root disk.
+sno_omr_data_disk_size: 0
+sno_omr_data_disk_wwn: "0x5000c500a1b2c301"
+sno_omr_data_disk_byid: "/dev/disk/by-id/wwn-{{ sno_omr_data_disk_wwn }}"
+# --targetHostname for `mirror-registry install`; empty = installer default.
+sno_omr_target_hostname: "localhost"
+
+# "m2m"   — mirror-to-mirror from the host straight into the registry (default).
+# "m2d2m" — mirror-to-disk on the host, carry the archive to the bastion,
+#           disk-to-mirror from there (guide §2.5 / §4.1). Currently only
+#           together with sno_mirror_registry_type: "omr" (it reuses the
+#           bastion's /root authfile and sno_omr_root).
+sno_mirror_workflow: "m2m"
+# false (default): every m2d run produces a FULL archive (earlier
+# working-dir/.history/ is removed first). true: keep the history, so the
+# archive holds only what changed since the last run (guide §2.7 "差分の持ち込み").
+sno_mirror_m2d_incremental: false
+# false: skip m2d/carry/d2m (registry already filled), just refetch cluster-resources.
+sno_mirror_m2d2m_run: true
+# Disk-to-mirror parallelism. The guide prescribes 1/1 for OMR 2.x (KB 7146838).
+sno_mirror_parallel_images: 1
+sno_mirror_parallel_layers: 1
+
 # Escape hatch: pin the exact release image `openshift-install` pulls when
 # building the agent ISO. Leave empty to let the installer resolve it.
 sno_release_image_override: ""

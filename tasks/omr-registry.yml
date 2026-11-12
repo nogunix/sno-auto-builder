@@ -1,0 +1,241 @@
+---
+# Disconnected install, stage 2 (bastion) — alternative registry:
+# mirror registry for Red Hat OpenShift (OMR) 2.x, offline bundle.
+#
+# Imported by 01-infra-bastion.yml's bastion play instead of
+# tasks/mirror-registry.yml when sno_mirror_registry_type is "omr" (data
+# volume by-id, `mirror-registry install` with --sqliteStorage, CA trust, wait
+# for /v2/ to answer 401, podman login with an explicit --authfile).
+#
+# OMR is supported on RHEL 8/9 only. This bastion is CentOS Stream 9, so a run
+# here is a functional check of the procedure, not a supported configuration.
+
+- name: Assert the bastion has enough memory for OMR
+  ansible.builtin.assert:
+    that:
+      - sno_bastion_memory | int >= 6
+    fail_msg: >-
+      sno_mirror_registry_type is "omr" but sno_bastion_memory is
+      {{ sno_bastion_memory }} GB. Quay, redis and a disk-to-mirror run on the
+      same bastion need at least 6 GB; set sno_bastion_memory: 8.
+
+- name: Install the packages OMR and oc-mirror need on the bastion
+  ansible.builtin.dnf:
+    name:
+      - podman
+      - tar
+      - openssl
+      - gpgme
+      - rsync
+      - xfsprogs
+    state: present
+  become: true
+
+# The data volume goes into fstab by its stable by-id name, never by /dev/sdX,
+# to avoid dropping to emergency mode if device names swap across reboots.
+# bastion.tf.j2 attaches the disk on the SCSI bus with a fixed WWN, which is
+# what makes /dev/disk/by-id/wwn-<wwn> predictable here.
+- name: Prepare the OMR data volume
+  when: sno_omr_data_disk_size | int > 0
+  become: true
+  block:
+    # Plain mkfs rather than community.general.filesystem, so the repo does
+    # not grow a collection dependency. blkid exits 2 on a blank device.
+    - name: Check for an existing filesystem on the data disk
+      ansible.builtin.command:
+        cmd: blkid -o value -s TYPE {{ sno_omr_data_disk_byid }}
+      register: _sno_omr_blkid
+      changed_when: false
+      failed_when: _sno_omr_blkid.rc not in [0, 2]
+
+    - name: Create an XFS filesystem on the data disk (by-id)
+      ansible.builtin.command:
+        cmd: mkfs.xfs {{ sno_omr_data_disk_byid }}
+      when: _sno_omr_blkid.rc == 2
+      changed_when: true
+
+    - name: Mount the data disk by its by-id name with nofail
+      ansible.posix.mount:
+        path: "{{ sno_omr_root }}"
+        src: "{{ sno_omr_data_disk_byid }}"
+        fstype: xfs
+        opts: defaults,nofail
+        state: mounted
+
+- name: Create the OMR directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  become: true
+  loop:
+    - "{{ sno_omr_root }}/mirror-registry"
+    - "{{ sno_omr_root }}/registry-storage"
+    - "{{ sno_omr_root }}/carry"
+
+- name: Copy the OMR offline bundle from the host
+  ansible.builtin.copy:
+    src: "{{ sno_omr_bundle_local }}"
+    dest: "{{ sno_omr_root }}/carry/mirror-registry-offline.tar.gz"
+    mode: '0644'
+  become: true
+  when: sno_omr_bundle_local | length > 0
+
+- name: Download the OMR offline bundle
+  ansible.builtin.get_url:
+    url: "{{ sno_omr_bundle_url }}"
+    dest: "{{ sno_omr_root }}/carry/mirror-registry-offline.tar.gz"
+    mode: '0644'
+  become: true
+  when: sno_omr_bundle_local | length == 0
+
+- name: Extract the OMR offline bundle
+  ansible.builtin.unarchive:
+    src: "{{ sno_omr_root }}/carry/mirror-registry-offline.tar.gz"
+    dest: "{{ sno_omr_root }}/mirror-registry"
+    remote_src: true
+    creates: "{{ sno_omr_root }}/mirror-registry/mirror-registry"
+  become: true
+
+# The repo's CA signs the registry certificate (tasks/mirror-ca.yml), using
+# --sslCert/--sslKey (custom CA) rather than OMR's self-signed CA. That keeps
+# install-config's additionalTrustBundle identical across registry types.
+- name: Install the registry certificate for OMR
+  ansible.builtin.copy:
+    src: "{{ sno_mirror_dir }}/{{ item.src }}"
+    dest: "{{ sno_omr_root }}/mirror-registry/{{ item.src }}"
+    mode: "{{ item.mode }}"
+  become: true
+  loop:
+    - {src: registry.crt, mode: '0644'}
+    - {src: registry.key, mode: '0600'}
+    - {src: ca.crt, mode: '0644'}
+  loop_control:
+    label: "{{ item.src }}"
+
+- name: Check whether OMR is already installed
+  ansible.builtin.stat:
+    path: "{{ sno_omr_root }}/quay-install/quay-config/config.yaml"
+  register: _sno_omr_installed
+  become: true
+
+# §3.2. HOME/USER are set explicitly: the installer drives its own ansible over
+# SSH, deriving the user from $USER and the key from $HOME, and under sudo or
+# automation they are not guaranteed (the guide's "@<hostname> UNREACHABLE /
+# exit status 4" note). --targetHostname is pinned for the same reason.
+- name: Install OMR from the offline bundle
+  ansible.builtin.command:
+    chdir: "{{ sno_omr_root }}/mirror-registry"
+    argv: "{{ _sno_omr_argv + (['--targetHostname', sno_omr_target_hostname] if sno_omr_target_hostname | length > 0 else []) }}"
+  vars:
+    _sno_omr_argv:
+      - ./mirror-registry
+      - install
+      - --quayHostname
+      - "{{ sno_mirror_registry }}"
+      - --quayRoot
+      - "{{ sno_omr_root }}/quay-install"
+      - --quayStorage
+      - "{{ sno_omr_root }}/registry-storage/quay-storage"
+      - --sqliteStorage
+      - "{{ sno_omr_root }}/registry-storage/sqlite-storage"
+      - --image-archive
+      - image-archive.tar
+      - --sslCert
+      - registry.crt
+      - --sslKey
+      - registry.key
+      - --initUser
+      - "{{ sno_mirror_registry_user }}"
+      - --initPassword
+      - "{{ sno_mirror_registry_password }}"
+      - --targetUsername
+      - root
+  environment:
+    HOME: /root
+    USER: root
+  become: true
+  when: not _sno_omr_installed.stat.exists
+  register: _sno_omr_install
+  changed_when: true
+
+# §9.9: the installer can exit 0 on a bad option. Judge by the artefacts.
+- name: Check that the OMR install produced its config
+  ansible.builtin.stat:
+    path: "{{ sno_omr_root }}/quay-install/quay-config/config.yaml"
+  register: _sno_omr_config
+  become: true
+
+- name: Assert the OMR install really happened
+  ansible.builtin.assert:
+    that:
+      - _sno_omr_config.stat.exists
+    fail_msg: >-
+      mirror-registry install returned but
+      {{ sno_omr_root }}/quay-install/quay-config/config.yaml does not exist.
+      See the installer output above.
+
+- name: Open the mirror registry port
+  ansible.posix.firewalld:
+    port: "{{ sno_mirror_registry_port }}/tcp"
+    permanent: true
+    state: enabled
+    immediate: true
+  become: true
+
+# §3.3: OMR does not add any CA to the host trust store.
+- name: Trust the registry CA on the bastion
+  ansible.builtin.copy:
+    src: "{{ sno_mirror_dir }}/ca.crt"
+    dest: /etc/pki/ca-trust/source/anchors/mirror-registry-rootCA.pem
+    mode: '0644'
+  become: true
+
+- name: Rebuild the bastion trust bundle
+  ansible.builtin.command:
+    cmd: update-ca-trust extract
+  become: true
+  changed_when: false
+
+# §3.4: /v2/ moves 000 -> 502 -> 401; only 401 means Quay is serving.
+- name: Wait for Quay to answer /v2/ with 401
+  ansible.builtin.uri:
+    url: "https://{{ sno_mirror_registry }}/v2/"
+    status_code: 401
+  register: _sno_omr_v2
+  until: _sno_omr_v2.status | default(0) == 401
+  retries: 60
+  delay: 10
+  become: true
+
+- name: Log in to the registry with an explicit authfile
+  ansible.builtin.command:
+    argv:
+      - podman
+      - login
+      - --authfile
+      - /root/.config/containers/auth.json
+      - -u
+      - "{{ sno_mirror_registry_user }}"
+      - -p
+      - "{{ sno_mirror_registry_password }}"
+      - "{{ sno_mirror_registry }}"
+  become: true
+  changed_when: false
+  no_log: true
+
+# §3.5
+- name: Record the OMR state
+  ansible.builtin.shell:
+    cmd: >-
+      podman ps --format '{{ '{{' }}.Names{{ '}}' }} {{ '{{' }}.Image{{ '}}' }}';
+      systemctl is-active quay-app quay-redis;
+      podman exec quay-app grep -i DB_URI /quay-registry/conf/stack/config.yaml
+  become: true
+  register: _sno_omr_state
+  changed_when: false
+  failed_when: false
+
+- name: Show the OMR state
+  ansible.builtin.debug:
+    var: _sno_omr_state.stdout_lines

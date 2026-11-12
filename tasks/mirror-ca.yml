@@ -58,6 +58,18 @@
       even with the right x.y — "stable-4.20" resolves to the newest 4.20.z.
       Set sno_cluster_version to "{{ sno_mirror_max_version }}".
 
+- name: Assert the registry/mirroring flavour is a supported combination
+  ansible.builtin.assert:
+    that:
+      - sno_mirror_registry_type in ['distribution', 'omr']
+      - sno_mirror_workflow in ['m2m', 'm2d2m']
+      - sno_mirror_workflow == 'm2m' or sno_mirror_registry_type == 'omr'
+      - sno_mirror_registry_type != 'omr' or sno_mirror_registry_password | length >= 8
+    fail_msg: >-
+      Unsupported combination: sno_mirror_registry_type={{ sno_mirror_registry_type }},
+      sno_mirror_workflow={{ sno_mirror_workflow }}. m2d2m needs "omr", and OMR
+      needs a sno_mirror_registry_password of at least 8 characters.
+
 - name: Create the mirror working directory
   ansible.builtin.file:
     path: "{{ item }}"
