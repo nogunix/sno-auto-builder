@@ -278,45 +278,22 @@
         dest: "{{ sno_manifests_dir }}/agent-config.yaml"
         mode: '0644'
 
-    - name: Write composefs MachineConfig for OCP 4.22+
-      ansible.builtin.copy:
-        dest: "{{ sno_manifests_dir }}/openshift/99-master-composefs-module.yaml"
-        mode: '0644'
-        content: |
-          apiVersion: machineconfiguration.openshift.io/v1
-          kind: MachineConfig
-          metadata:
-            labels:
-              machineconfiguration.openshift.io/role: master
-            name: 99-master-composefs-module
-          spec:
-            config:
-              ignition:
-                version: 3.4.0
-              storage:
-                files:
-                  - path: /etc/modules-load.d/composefs.conf
-                    mode: 0644
-                    overwrite: true
-                    contents:
-                      source: "data:,composefs%0A"
-              systemd:
-                units:
-                  - name: modprobe-composefs.service
-                    enabled: true
-                    contents: |
-                      [Unit]
-                      Description=Load composefs module for node-image-overlay
-                      Before=node-image-overlay.service
-                      DefaultDependencies=no
-
-                      [Service]
-                      Type=oneshot
-                      ExecStart=/sbin/modprobe composefs
-                      RemainAfterExit=yes
-
-                      [Install]
-                      WantedBy=sysinit.target
+    # The manifests below are optional, and openshift/ survives between runs
+    # of 01. Remove them first so that flipping sno_disconnected back to false
+    # does not leave a disconnected-only manifest behind for the next ISO. The
+    # composefs MachineConfig is listed because 01 used to write it: it ran
+    # `modprobe composefs`, but RHEL 9.6 and 10 kernels have no such module
+    # (composefs is userspace over erofs + overlayfs), and nothing in the 4.22
+    # or 5.0.1 installer or MCO refers to it — a 5.0.1 install without it was
+    # verified live.
+    - name: Remove optional manifests left by an earlier run
+      ansible.builtin.file:
+        path: "{{ sno_manifests_dir }}/openshift/{{ item }}"
+        state: absent
+      loop:
+        - 99-master-composefs-module.yaml
+        - 99-samples-removed.yaml
+        - 99-operatorhub-disable-default-sources.yaml
 
     # Disconnected only: start the Cluster Samples Operator as Removed. Without
     # a Config it bootstraps by dialling registry.redhat.io for 5 minutes, and
@@ -339,6 +316,27 @@
             name: cluster
           spec:
             managementState: Removed
+      when: sno_disconnected | bool
+
+    # Disconnected only: disable the default OperatorHub catalogs at install
+    # time. They point at registry.redhat.io, so on an isolated network their
+    # catalog pods sit in ImagePullBackOff forever. Red Hat's restricted-network
+    # docs make this a mandatory post-install `oc patch`; the CVO ships
+    # OperatorHub/cluster as `release.openshift.io/create-only`, so an object
+    # created from this manifest at bootstrap is left as written. Mirrored
+    # operators come back through the CatalogSource oc-mirror generates (see
+    # README).
+    - name: Disable the default OperatorHub catalogs (disconnected)
+      ansible.builtin.copy:
+        dest: "{{ sno_manifests_dir }}/openshift/99-operatorhub-disable-default-sources.yaml"
+        mode: '0644'
+        content: |
+          apiVersion: config.openshift.io/v1
+          kind: OperatorHub
+          metadata:
+            name: cluster
+          spec:
+            disableAllDefaultSources: true
       when: sno_disconnected | bool
 
     # Built as a dict rather than inline so the release override can be absent

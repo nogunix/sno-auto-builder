@@ -110,23 +110,6 @@
           - installer_stat.stat.exists
         fail_msg: "Missing prerequisites"
 
-    # --- MachineConfig generation (mirrors 01) ---
-    - name: Write composefs MachineConfig for OCP 4.22+
-      ansible.builtin.copy:
-        dest: "{{ sno_manifests_dir }}/openshift/99-master-composefs-module.yaml"
-        mode: "0644"
-        content: |
-          apiVersion: machineconfiguration.openshift.io/v1
-          kind: MachineConfig
-          metadata:
-            labels:
-              machineconfiguration.openshift.io/role: master
-            name: 99-master-composefs-module
-          spec:
-            config:
-              ignition:
-                version: 3.4.0
-
     # --- Legacy file cleanup (mirrors 01) ---
     - name: Remove legacy standalone .tf files
       ansible.builtin.file:

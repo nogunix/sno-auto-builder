@@ -81,6 +81,11 @@ sno_installer_path: "{{ sno_tf_dir }}/openshift-install"
 sno_installer_url: "https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ sno_cluster_version }}/openshift-install-linux.tar.gz"
 sno_manifests_dir: "{{ sno_tf_dir }}/generated/{{ sno_cluster_name }}"
 
+# How many extra times 02 re-runs `agent wait-for install-complete` when it
+# times out (exit 6/7). Each wait is the installer's fixed 40 minutes, so the
+# default allows up to 80 minutes in total. 0 restores the single wait.
+sno_install_complete_retries: 1
+
 # ==============================================================================
 # Disconnected install — mirror registry on the bastion
 # ==============================================================================
