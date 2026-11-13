@@ -5,14 +5,25 @@
   gather_facts: false
   vars_files:
     - vars.yml
-  vars:
-    sno_base_dir: /tmp/sno-validate
-    sno_pool_dir: /tmp/sno-validate/pool
-    sno_tf_dir: /tmp/sno-validate/work
-    sno_manifests_dir: /tmp/sno-validate/generated/ocp4
-    sno_mcp_dir: /tmp/sno-validate/mcp
 
   tasks:
+    # Not play `vars:` — vars_files outranks those, so vars.yml's
+    # ~/sno-lab paths won and this playbook used to leave a 0-byte agent ISO
+    # and openshift-install there, which a later real 01 run would pick up.
+    # set_fact outranks vars_files. Every derived path is set explicitly too:
+    # CI runs this in the same ansible-playbook call as test-render.yml, and
+    # facts persist across plays, so anything left to derive lazily would
+    # still point at test-render's /tmp/sno-rendered.
+    - name: Point every path at the scratch directory
+      ansible.builtin.set_fact:
+        sno_base_dir: /tmp/sno-validate
+        sno_pool_dir: /tmp/sno-validate/pool
+        sno_tf_dir: /tmp/sno-validate/work
+        sno_installer_path: /tmp/sno-validate/work/openshift-install
+        sno_manifests_dir: /tmp/sno-validate/generated/ocp4
+        sno_mirror_dir: /tmp/sno-validate/mirror
+        sno_mcp_dir: /tmp/sno-validate/mcp
+
     - name: Create test working directories
       ansible.builtin.file:
         path: "{{ item }}"
