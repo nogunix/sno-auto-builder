@@ -174,6 +174,18 @@ EOF
 semanage port -a -t http_port_t -p tcp 6443
 semanage port -a -t http_port_t -p tcp 22623
 
+# The stock unit has no Restart=, so one crash takes the API VIP down for good.
+# That happened on a live 5.0.1 run: on a busy host haproxy's watchdog judged a
+# health-check thread stuck and aborted the process (exit 134), and every
+# `oc` / `wait-for` against the VIP got "connection refused" for the next hour
+# while the cluster itself finished installing behind it.
+mkdir -p /etc/systemd/system/haproxy.service.d
+cat <<EOF > /etc/systemd/system/haproxy.service.d/10-restart.conf
+[Service]
+Restart=on-failure
+RestartSec=5s
+EOF
+systemctl daemon-reload
 systemctl enable --now haproxy
 firewall-cmd --permanent --add-port=80/tcp
 firewall-cmd --permanent --add-port=443/tcp
