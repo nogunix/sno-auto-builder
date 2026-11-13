@@ -204,6 +204,11 @@ cat ~/sno-lab/work/generated/ocp4/auth/kubeadmin-password
 | **Bootstrap** | Agent ISO boots, writes RHCOS to disk, brings up temporary control plane | 15–30 min |
 | **Install complete** | Installed system boots, all cluster operators become available | 45–90 min additional |
 
+`openshift-install` gives up on the install-complete phase after a fixed 40
+minutes even when the cluster is merely slow, so `02` re-runs that wait once
+more on a timeout (`sno_install_complete_retries`, default `1`; `0` turns it
+off). Other failures are not retried.
+
 If you need to re-run only the monitoring step (e.g. after a restart), run from the host:
 
 ```bash
@@ -525,9 +530,16 @@ and it pulls from the upstream registry instead
 OCPBUGS-36780); `imageContentSources` is the fallback, at the price of a
 deprecation warning.
 
+**Two cluster settings are applied at install time**, because both would
+otherwise keep calling registry.redhat.io from an isolated network: the Cluster
+Samples Operator starts as `Removed`, and the default OperatorHub catalogs are
+disabled (`disableAllDefaultSources: true`, the step Red Hat's
+restricted-network docs have you do by hand after install).
+
 **Mirrored operators need a day-2 step.** `sno_mirror_operators` fills the
 registry, but the `CatalogSource` and `ImageTagMirrorSet` that make the catalog
-usable are written to
+usable — and, with the default catalogs disabled, the only catalog the cluster
+has — are written to
 `<sno_mirror_dir>/working-dir/cluster-resources/` and are **not** applied by
 these playbooks — `oc apply -f` them yourself once the cluster is up. The
 release payload itself needs nothing extra: `imageDigestSources` in
