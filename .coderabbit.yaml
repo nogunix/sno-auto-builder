@@ -33,7 +33,12 @@ reviews:
         - The repo must keep passing `ansible-lint --profile production`
           (FQCN modules, named tasks, no bare `command`/`shell` without
           `changed_when`, no `ignore_errors` without reason, etc.).
-        - Check idempotency: re-running a playbook must not break an existing deployment.
+        - Re-run safety follows the contract in CLAUDE.md: 01-infra-bastion.yml
+          must be safe to re-run and leave a running master untouched (bastion
+          setup stays idempotency-guarded). 02-create-sno-cluster.yml
+          intentionally recreates/reconfigures the master VM on re-run, so do
+          not flag that as a bug; do flag anything that breaks the destroy →
+          undefine → apply sequence.
         - Secrets (pull secret, kubeconfig, SSH keys, tokens) must use `no_log: true`
           and must never be written to the repo.
         - 99-destroy-all.yml must clean up everything the other playbooks create.
