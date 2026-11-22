@@ -1,0 +1,100 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit configuration — https://docs.coderabbit.ai/reference/configuration
+language: ja-JP
+early_access: false
+
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  review_status: true
+  collapse_walkthrough: false
+  sequence_diagrams: false
+  poem: false
+
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - main
+
+  # Generated / local-only files that should never be reviewed
+  path_filters:
+    - "!coverage.xml"
+    - "!**/*.pyc"
+    - "!**/__pycache__/**"
+    - "!.ansible/**"
+    - "!.claude/**"
+
+  path_instructions:
+    - path: "*.yml"
+      instructions: |
+        Ansible playbooks (01-06, 99) deploying OpenShift SNO with OpenTofu + libvirt/KVM.
+        - The repo must keep passing `ansible-lint --profile production`
+          (FQCN modules, named tasks, no bare `command`/`shell` without
+          `changed_when`, no `ignore_errors` without reason, etc.).
+        - Check idempotency: re-running a playbook must not break an existing deployment.
+        - Secrets (pull secret, kubeconfig, SSH keys, tokens) must use `no_log: true`
+          and must never be written to the repo.
+        - 99-destroy-all.yml must clean up everything the other playbooks create.
+        - Keep variables in vars.yml; flag hard-coded IPs, versions or paths.
+    - path: "vars.yml"
+      instructions: |
+        Central configuration. Flag defaults that break air-gapped / mirror flows,
+        inconsistent network CIDRs, and any committed credentials.
+    - path: "tasks/**/*.yml"
+      instructions: |
+        Included task files for mirror registry / OMR / oc-mirror flows.
+        Same ansible-lint production rules apply. Check for idempotency and
+        correct handling of TLS CA trust.
+    - path: "templates/**/*.j2"
+      instructions: |
+        Jinja2 templates rendering OpenTofu (*.tf.j2), OpenShift install/agent
+        configs, nginx, dnsmasq and NMState manifests. Verify the rendered output
+        is valid for its target format (HCL / YAML / nginx conf), variables are
+        defined in vars.yml, and whitespace control does not break YAML indentation.
+    - path: "test/**"
+      instructions: |
+        Mock-based tests (mock binaries / collections) and shell helpers.
+        Shell scripts should be shellcheck-clean and use `set -euo pipefail`.
+    - path: "callback_plugins/**/*.py"
+      instructions: |
+        Ansible callback plugin producing coverage reports. Check compatibility
+        with current ansible-core callback API.
+    - path: ".github/workflows/**"
+      instructions: |
+        GitHub Actions. Pin action versions, keep least-privilege `permissions`.
+    - path: "**/*.md"
+      instructions: |
+        Documentation. Check that commands, playbook names and variables match
+        the actual code.
+
+  tools:
+    shellcheck:
+      enabled: true
+    yamllint:
+      enabled: true
+    ruff:
+      enabled: true
+    actionlint:
+      enabled: true
+    hadolint:
+      enabled: true
+    gitleaks:
+      enabled: true
+    checkov:
+      enabled: true
+    markdownlint:
+      enabled: true
+    github-checks:
+      enabled: true
+      timeout_ms: 300000
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "CLAUDE.md"
